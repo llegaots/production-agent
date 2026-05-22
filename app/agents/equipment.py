@@ -28,6 +28,12 @@ class EquipmentAgent(Agent):
         jobs_by_id = {j.id: j for j in ctx.jobs}
         crews_by_id = {c.id: c for c in ctx.crews}
 
+        await ctx.emit_tool(
+            "equipment_check",
+            "invoke",
+            "Validating crew loadouts vs job requirements and daily equipment contention.",
+            {"draft_entries": len(draft)},
+        )
         await ctx.emit(self.name, "start", "Checking equipment loadouts per crew/day.")
 
         # equipment kinds available per crew (from store)

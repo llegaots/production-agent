@@ -23,11 +23,32 @@ class AgentContext:
     blackboard: dict = field(default_factory=dict)
     events: list[AgentEvent] = field(default_factory=list)
 
-    async def emit(self, agent: str, phase: str, message: str, detail: dict | None = None) -> None:
-        evt = AgentEvent(agent=agent, phase=phase, message=message, detail=detail)
+    async def emit(
+        self,
+        agent: str,
+        phase: str,
+        message: str,
+        detail: dict | None = None,
+        *,
+        kind: str = "agent",
+    ) -> None:
+        evt = AgentEvent(agent=agent, phase=phase, message=message, detail=detail, kind=kind)
         self.events.append(evt)
         if self.emitter:
             await self.emitter(evt)
+
+    async def emit_tool(
+        self, tool: str, phase: str, message: str, detail: dict | None = None
+    ) -> None:
+        """Emit a tool-style step (deterministic op the agent invoked)."""
+        d = dict(detail or {})
+        d["tool"] = tool
+        await self.emit("ToolRunner", phase, message, d, kind="tool")
+
+    async def emit_llm(
+        self, phase: str, message: str, detail: dict | None = None
+    ) -> None:
+        await self.emit("LLM", phase, message, detail, kind="llm")
 
 
 class Agent:
@@ -56,3 +77,12 @@ def drive_minutes(distance_km: float, avg_speed_kmh: float = 35.0) -> int:
 
 def week_days(week_start: date, n: int = 5) -> list[date]:
     return [week_start + timedelta(days=i) for i in range(n)]
+
+
+def llm_trace_callback(ctx: AgentContext):
+    """Build an LLM trace hook that streams via the shared agent context."""
+
+    async def _trace(phase: str, message: str, detail: dict) -> None:
+        await ctx.emit_llm(phase, message, detail)
+
+    return _trace

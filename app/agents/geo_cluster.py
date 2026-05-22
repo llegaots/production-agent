@@ -25,6 +25,12 @@ class GeoClusterAgent(Agent):
 
     async def run(self, ctx: AgentContext) -> None:
         jobs = list(ctx.jobs)
+        await ctx.emit_tool(
+            "geo_cluster",
+            "invoke",
+            f"Clustering {len(jobs)} pending jobs by location (haversine farthest-first).",
+            {"job_count": len(jobs), "target_clusters": "computed"},
+        )
         await ctx.emit(
             self.name,
             "start",

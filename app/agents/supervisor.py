@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from ..llm import llm
+from ..supabase_client import supabase
 from ..models import (
     CrewDay,
     MessageQuality,
@@ -28,7 +29,7 @@ from ..models import (
     WeekPlan,
 )
 from ..storage import store
-from .base import Agent, AgentContext, EventEmitter
+from .base import Agent, AgentContext, EventEmitter, llm_trace_callback
 from .client_comms import ClientCommsAgent
 from .crew_match import CrewMatchAgent
 from .equipment import EquipmentAgent
@@ -66,7 +67,25 @@ class SupervisorAgent(Agent):
 
         ctx = AgentContext(week_start=ws, crews=crews, jobs=jobs, emitter=emitter)
 
-        await ctx.emit(self.name, "start", f"Planning week starting {ws.isoformat()} with {len(jobs)} jobs across {len(crews)} crews.")
+        await ctx.emit(
+            "System",
+            "config",
+            f"Runtime: LLM {'enabled' if llm.enabled else 'off'} ({llm.model if llm.enabled else 'templates'}), "
+            f"Supabase {'enabled' if supabase.enabled else 'off'}.",
+            detail={
+                "llm_enabled": llm.enabled,
+                "llm_model": llm.model if llm.enabled else None,
+                "supabase_enabled": supabase.enabled,
+                "jobs": len(jobs),
+                "crews": len(crews),
+            },
+            kind="system",
+        )
+        await ctx.emit(
+            self.name,
+            "start",
+            f"Planning week starting {ws.isoformat()} with {len(jobs)} jobs across {len(crews)} crews.",
+        )
 
         # Phase 1 - sequential dependencies: geo cluster -> crew match
         await self.geo.run(ctx)
@@ -177,7 +196,14 @@ class SupervisorAgent(Agent):
                 + "\n- ".join(conflicts[:8])
                 + "\nWrite the summary."
             )
-            text = await llm.chat(sys, user, max_tokens=260, temperature=0.4)
+            text = await llm.chat(
+                sys,
+                user,
+                max_tokens=260,
+                temperature=0.4,
+                trace=llm_trace_callback(ctx),
+                trace_label="supervisor.summary",
+            )
             if text:
                 return text
         return bullet_text

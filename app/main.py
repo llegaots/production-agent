@@ -204,7 +204,15 @@ async def plan_week_stream(req: PlanRequest) -> StreamingResponse:
             if not task.done():
                 task.cancel()
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/reschedule", response_model=RescheduleResult)
@@ -220,6 +228,58 @@ async def reschedule(req: RescheduleRequest) -> RescheduleResult:
     except Exception:
         pass
     return result
+
+
+@app.post("/api/reschedule/stream")
+async def reschedule_stream(req: RescheduleRequest) -> StreamingResponse:
+    """SSE stream of reschedule agent steps."""
+    plan = store.get_plan()
+    if not plan:
+        raise HTTPException(status_code=400, detail="No plan exists yet. Run /api/plan first.")
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def emitter(evt: AgentEvent) -> None:
+        await queue.put({"type": "event", "data": evt.model_dump(mode="json")})
+
+    async def runner() -> None:
+        try:
+            rescheduler = ReschedulerAgent()
+            result = await rescheduler.run_reschedule(
+                plan, req.job_id, req.reason, emitter=emitter
+            )
+            try:
+                await persist_job_status(req.job_id, JobStatus.RESCHEDULED)
+                await persist_reschedule_events(None, req.job_id, result.events)
+            except Exception:
+                pass
+            await queue.put({"type": "result", "data": result.model_dump(mode="json")})
+        except Exception as exc:  # noqa: BLE001
+            await queue.put({"type": "error", "data": {"message": str(exc)}})
+        finally:
+            await queue.put(None)
+
+    async def event_gen() -> AsyncIterator[bytes]:
+        task = asyncio.create_task(runner())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n".encode()
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/jobs/{job_id}/confirm", response_model=Job)

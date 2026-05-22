@@ -23,6 +23,12 @@ class TimeBudgetAgent(Agent):
         jobs_by_id = {j.id: j for j in ctx.jobs}
         crews_by_id = {c.id: c for c in ctx.crews}
 
+        await ctx.emit_tool(
+            "time_budget",
+            "invoke",
+            "Sequencing stops with drive-time estimates and daily minute caps.",
+            {"draft_entries": len(draft)},
+        )
         await ctx.emit(self.name, "start", "Sequencing stops & validating time budgets.")
 
         crew_days: list[CrewDay] = []

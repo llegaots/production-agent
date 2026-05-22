@@ -27,7 +27,7 @@ from typing import Optional
 from ..llm import llm, safe_json
 from ..models import CrewDay, Job
 from ..storage import store
-from .base import Agent, AgentContext
+from .base import Agent, AgentContext, llm_trace_callback
 
 
 class PlanReviewerAgent(Agent):
@@ -41,6 +41,12 @@ class PlanReviewerAgent(Agent):
         message_guardrail_flags = ctx.blackboard.get("message_guardrail_flags", [])
         message_critic_scores = ctx.blackboard.get("message_critic_scores", {})
 
+        await ctx.emit_tool(
+            "plan_review",
+            "invoke",
+            "Computing KPIs, risk score, and optional LLM narrative.",
+            {"crew_days": len(crew_days)},
+        )
         await ctx.emit(self.name, "start", "Scoring the assembled plan.")
 
         jobs_by_id = {j.id: j for j in ctx.jobs}
@@ -182,5 +188,12 @@ class PlanReviewerAgent(Agent):
             + (f"\nRecommendation: {recommendation}" if recommendation else "")
             + "\n\nWrite the review."
         )
-        out = await llm.chat(sys, user, max_tokens=220, temperature=0.3)
+        out = await llm.chat(
+            sys,
+            user,
+            max_tokens=220,
+            temperature=0.3,
+            trace=llm_trace_callback(ctx),
+            trace_label="plan_reviewer.narrative",
+        )
         return out or deterministic

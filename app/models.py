@@ -130,6 +130,7 @@ class AgentEvent(BaseModel):
     phase: str
     message: str
     detail: Optional[dict] = None
+    kind: str = "agent"  # agent | tool | llm | data | system
 
 
 class MessageQuality(BaseModel):

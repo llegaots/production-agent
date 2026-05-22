@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Optional
+from typing import Awaitable, Callable, Optional
+
+TraceFn = Callable[[str, str, dict], Awaitable[None]]
 
 import httpx
 from dotenv import load_dotenv
@@ -37,9 +39,25 @@ class LLMClient:
         *,
         max_tokens: int = 600,
         temperature: float = 0.4,
+        trace: Optional[TraceFn] = None,
+        trace_label: str = "llm.chat",
     ) -> Optional[str]:
         if not self.enabled:
             return None
+
+        preview = (user[:200] + "…") if len(user) > 200 else user
+        if trace:
+            await trace(
+                "call",
+                f"Calling {self.model} ({trace_label})",
+                {
+                    "tool": trace_label,
+                    "model": self.model,
+                    "max_tokens": max_tokens,
+                    "input_preview": preview,
+                },
+            )
+
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
@@ -59,8 +77,24 @@ class LLMClient:
                 r = await client.post(url, headers=headers, json=payload)
                 r.raise_for_status()
                 data = r.json()
-                return data["choices"][0]["message"]["content"].strip()
+                text = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage") or {}
+                if trace:
+                    out_preview = (text[:160] + "…") if len(text) > 160 else text
+                    await trace(
+                        "result",
+                        f"{self.model} returned {len(text)} chars",
+                        {
+                            "tool": trace_label,
+                            "output_preview": out_preview,
+                            "prompt_tokens": usage.get("prompt_tokens"),
+                            "completion_tokens": usage.get("completion_tokens"),
+                        },
+                    )
+                return text
         except Exception as exc:  # noqa: BLE001 - LLM is optional
+            if trace:
+                await trace("error", f"LLM error: {exc}", {"tool": trace_label})
             return f"[LLM fallback after error: {exc}]"
 
     @staticmethod

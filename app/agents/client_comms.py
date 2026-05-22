@@ -24,7 +24,7 @@ from typing import Optional
 from ..llm import llm
 from ..models import Job
 from ..storage import store
-from .base import Agent, AgentContext
+from .base import Agent, AgentContext, llm_trace_callback
 from .message_critic import CritiqueResult, MessageCriticAgent
 from .message_guardrail import GuardrailResult, MessageGuardrailAgent
 
@@ -120,19 +120,28 @@ class ClientCommsAgent(Agent):
                         job, client, crew, date_str, arrival, profile, feedback
                     )
 
+                    await ctx.emit_tool(
+                        "guardrail_check",
+                        "invoke",
+                        f"Running policy guardrail on draft for {job.id}.",
+                        {"job_id": job.id, "iteration": iteration},
+                    )
                     # Parallel sectioning: guardrail + critic run concurrently.
                     guardrail_task = asyncio.to_thread(
                         self.guardrail.check, draft, job, date_str, arrival
                     )
+                    trace_cb = llm_trace_callback(ctx)
                     critic_task = self.critic.critique(
-                        draft, job, profile, []  # filled in after guardrail result lands
+                        draft, job, profile, [], trace=trace_cb
                     )
                     guardrail, _critic_first = await asyncio.gather(guardrail_task, critic_task)
                     # Re-run critic with guardrail flags so it can fold them
                     # into the final score. This is cheap (no LLM call in the
                     # deterministic path) and gives the loop a single canonical
                     # score to branch on.
-                    critique = await self.critic.critique(draft, job, profile, guardrail.flags)
+                    critique = await self.critic.critique(
+                        draft, job, profile, guardrail.flags, trace=trace_cb
+                    )
 
                     await ctx.emit(
                         self.name,
@@ -253,7 +262,14 @@ class ClientCommsAgent(Agent):
             )
             + "\nReturn the message only — no preamble, no markdown fences."
         )
-        out = await llm.chat(sys, user, max_tokens=300, temperature=0.4)
+        out = await llm.chat(
+            sys,
+            user,
+            max_tokens=300,
+            temperature=0.4,
+            trace=llm_trace_callback(ctx),
+            trace_label=f"client_comms.draft.{job.id}",
+        )
         return out or baseline
 
     @staticmethod

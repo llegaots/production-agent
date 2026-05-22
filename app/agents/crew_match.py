@@ -71,6 +71,12 @@ class CrewMatchAgent(Agent):
         clusters: list[dict] = ctx.blackboard.get("geo_clusters", [])
         jobs_by_id = {j.id: j for j in ctx.jobs}
         days = week_days(ctx.week_start)
+        await ctx.emit_tool(
+            "crew_match",
+            "invoke",
+            f"Assigning {len(clusters)} geo clusters to crews/days (skill + equipment constraints).",
+            {"clusters": len(clusters), "crews": len(ctx.crews), "days": len(days)},
+        )
         await ctx.emit(
             self.name,
             "start",

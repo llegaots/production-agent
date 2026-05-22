@@ -19,7 +19,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from ..llm import llm, safe_json
+from ..llm import TraceFn, llm, safe_json
 from ..models import Job
 from ..storage import store
 
@@ -44,11 +44,14 @@ class MessageCriticAgent:
         job: Job,
         audience_profile: dict,
         guardrail_flags: list[str],
+        trace: TraceFn | None = None,
     ) -> CritiqueResult:
         score, feedback = cls._deterministic_score(message, job, audience_profile, guardrail_flags)
 
         if llm.enabled:
-            llm_score, llm_feedback = await cls._llm_score(message, job, audience_profile)
+            llm_score, llm_feedback = await cls._llm_score(
+                message, job, audience_profile, trace=trace
+            )
             if llm_score is not None:
                 # Combine: the LLM is asked to judge tone/clarity; the
                 # deterministic pass already checked structural facts.
@@ -118,7 +121,10 @@ class MessageCriticAgent:
     # ---------- LLM pass ----------
     @staticmethod
     async def _llm_score(
-        message: str, job: Job, audience_profile: dict
+        message: str,
+        job: Job,
+        audience_profile: dict,
+        trace: TraceFn | None = None,
     ) -> tuple[Optional[int], Optional[str]]:
         sys = (
             "You are a strict reviewer of client communications for a service business. "
@@ -133,7 +139,14 @@ class MessageCriticAgent:
             f"Draft message:\n---\n{message}\n---\n\n"
             "Return JSON only."
         )
-        raw = await llm.chat(sys, user, max_tokens=120, temperature=0.0)
+        raw = await llm.chat(
+            sys,
+            user,
+            max_tokens=120,
+            temperature=0.0,
+            trace=trace,
+            trace_label="message_critic.score",
+        )
         data = safe_json(raw or "")
         if not data:
             return None, None

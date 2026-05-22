@@ -45,8 +45,20 @@ class ReschedulerAgent(Agent):
     ) -> RescheduleResult:
         events: list[AgentEvent] = []
 
-        async def emit(phase: str, message: str, detail: dict | None = None) -> None:
-            evt = AgentEvent(agent=self.name, phase=phase, message=message, detail=detail)
+        async def emit(
+            phase: str,
+            message: str,
+            detail: dict | None = None,
+            *,
+            kind: str = "agent",
+        ) -> None:
+            evt = AgentEvent(
+                agent=self.name,
+                phase=phase,
+                message=message,
+                detail=detail,
+                kind=kind,
+            )
             events.append(evt)
             if emitter:
                 await emitter(evt)
