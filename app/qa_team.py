@@ -17,7 +17,7 @@ from .scheduling_prefs import SchedulingMode
 from .seed import seed
 from .storage import store
 from .supabase_client import supabase
-from .supabase_store import fetch_plan_db_snapshot, get_last_plan_id
+from .supabase_store import fetch_plan_db_snapshot, get_last_plan_id, persist_plan
 from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .vision import ACCEPTANCE_CRITERIA, PRODUCTION_MANAGER_VISION
 
@@ -134,6 +134,9 @@ class QATeamRunner:
         plan_base = await SupervisorAgent().plan_week(ws, scheduling_mode=SchedulingMode.BALANCED)
         reschedule_case = await self._scenario_reschedule(plan_base, ws)
         scenarios.append(reschedule_case)
+
+        # Persist the plan before DB verification
+        await persist_plan(plan_base)
 
         # DB verification after last plan
         db_checks.append(await self._verify_database(plan_base))

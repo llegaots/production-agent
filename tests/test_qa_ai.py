@@ -76,7 +76,17 @@ def test_ai_qa_reflective_loop(monkeypatch):
         )
 
     monkeypatch.setattr("app.agents.geo_cluster.geocoder.geocode", _fake_geocode)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-for-qa")
+    
+    # Reinitialize LLM client with the test API key
+    from app.llm import LLMClient
+    from app.qa_ai import runner
+    runner.llm = LLMClient()
+    
+    # Clear the succeeded cases registry so test cases aren't skipped
+    def _empty_fingerprints():
+        return []
+    monkeypatch.setattr("app.qa_ai.runner.fingerprints_for_prompt", _empty_fingerprints)
 
     design_cases = [case_a, case_b]
     critique_iter = iter(critiques)
