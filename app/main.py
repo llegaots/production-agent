@@ -97,7 +97,15 @@ async def health() -> dict:
         "model": llm.model if llm.enabled else None,
         "supabase_enabled": supabase.enabled,
         "cursor_handoff_enabled": cursor_cloud.enabled,
+        "qa_api": True,
+        "qa_modes": ["ai", "legacy"],
     }
+
+
+@app.get("/api/qa/ping")
+async def qa_ping() -> dict:
+    """Liveness check for QA routes (use to detect stale server processes)."""
+    return {"qa": True, "run": "POST /api/qa/run"}
 
 
 @app.get("/api/jobs", response_model=list[Job])

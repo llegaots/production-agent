@@ -12,6 +12,17 @@ echo "Installing dependencies..."
 python3 -m pip install -q -r requirements.txt
 
 PORT="${PORT:-3000}"
+
+# Stop a stale uvicorn on this port (common cause of 404 on /api/qa/*).
+if command -v lsof >/dev/null 2>&1; then
+  OLD_PIDS="$(lsof -ti ":${PORT}" 2>/dev/null || true)"
+  if [ -n "${OLD_PIDS}" ]; then
+    echo "Stopping existing process on port ${PORT} (reload latest code)..."
+    kill ${OLD_PIDS} 2>/dev/null || true
+    sleep 1
+  fi
+fi
+
 echo ""
 echo "Starting server at http://127.0.0.1:${PORT}"
 echo "Open that URL in your browser and click \"Run agents\"."

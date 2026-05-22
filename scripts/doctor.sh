@@ -50,6 +50,11 @@ sleep 2
 if curl -sf "http://127.0.0.1:${PORT}/api/ping" >/dev/null; then
   echo "OK: http://127.0.0.1:${PORT}/api/ping"
   curl -sf "http://127.0.0.1:${PORT}/api/health" && echo
+  if curl -sf "http://127.0.0.1:${PORT}/api/qa/ping" >/dev/null; then
+    echo "OK: QA API routes loaded (/api/qa/ping)"
+  else
+    echo "WARN: /api/qa/ping 404 — restart ./run.sh (stale server without QA)"
+  fi
   curl -sf -o /dev/null -w "UI: HTTP %{http_code}\n" "http://127.0.0.1:${PORT}/"
 else
   echo "FAIL: server did not respond. Check errors above."

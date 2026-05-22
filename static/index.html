@@ -372,9 +372,14 @@
           <h2 class="text-lg font-semibold">QA agent team</h2>
           <p class="text-[10px] text-neutral-500">AI operator reviews real schedules — critical “why this day?” feedback, reflective retries, novel cases.</p>
         </div>
+        <div x-show="qaApiReady === false" class="mx-4 mt-2 p-2 rounded border border-red-500/40 bg-red-950/40 text-xs text-red-200">
+          QA API not found (404). The server is running <strong>old code</strong>. In the project folder run:
+          <code class="mono block mt-1">./run.sh</code>
+          Then hard-refresh this page (Ctrl+Shift+R).
+        </div>
         <div class="ml-auto flex flex-wrap items-center gap-2">
-          <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled">LLM on · AI QA</span>
-          <span class="text-[10px] text-amber-400" x-show="!config.llm_enabled">No LLM key — use legacy QA</span>
+          <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">LLM on · AI QA</span>
+          <span class="text-[10px] text-amber-400" x-show="!config.llm_enabled && qaApiReady">No LLM key — use legacy QA</span>
           <button @click="runQaSuite('ai')" :disabled="qaRunning || !config.llm_enabled"
                   class="text-xs px-3 py-1.5 rounded-md bg-accent-500 text-surface-950 font-medium disabled:opacity-50"
                   :title="config.llm_enabled ? '' : 'Add ANTHROPIC_API_KEY to .env and restart ./run.sh'">
@@ -548,6 +553,7 @@
         importOverrides: {},
         schedulingMode: 'geo_first',
         qaRunning: false,
+        qaApiReady: null,
         qaReport: null,
         qaReportsList: [],
         _msgId: 0,
@@ -571,6 +577,7 @@
           this.config = cfg;
           if (pref?.mode) this.schedulingMode = pref.mode;
           this.initScheduleCursor();
+          this.checkQaApi();
           this.loadQaReports();
           if (draft) {
             this.pushAssistant('Loaded the latest draft plan from the server.', { scheduleHtml: this.buildScheduleTable(draft), actions: this.draftActions() });
@@ -811,7 +818,34 @@
           return data.message || fallback;
         },
 
+        async checkQaApi() {
+          try {
+            const r = await fetch('/api/qa/ping');
+            this.qaApiReady = r.ok;
+            if (r.ok) {
+              const h = await fetch('/api/health').then(x => x.json()).catch(() => ({}));
+              if (h.qa_api !== true) this.qaApiReady = false;
+            }
+          } catch (_) {
+            this.qaApiReady = false;
+          }
+        },
+
         async runQaSuite(mode) {
+          await this.checkQaApi();
+          if (this.qaApiReady === false) {
+            this.qaReport = {
+              passed: false,
+              overall_score: 0,
+              run_id: 'failed',
+              error_message:
+                'POST /api/qa/run returned Not Found.\n\n'
+                + 'Your server is still running an older build without QA routes.\n'
+                + 'Stop it and run ./run.sh from the project root, then refresh this page.',
+            };
+            this.tab = 'qa';
+            return;
+          }
           const qaMode = mode || (this.config.llm_enabled ? 'ai' : 'legacy');
           if (qaMode === 'ai' && !this.config.llm_enabled) {
             this.qaReport = {
