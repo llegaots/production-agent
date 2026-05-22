@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ProductionAgent — multi-agent scheduling for service businesses</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            ink: { 950: '#0b1020', 900: '#10172a', 800: '#1a2440', 700: '#2a3454' },
+            brand: { 500: '#5b8def', 600: '#3e6ee0', 400: '#7ea4f4' },
+            accent: { 500: '#3ddc97' },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #2a3454; border-radius: 6px; }
+    .agent-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600; }
+    .pulse-dot { animation: pulse 1.4s infinite ease-in-out; }
+    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+    .fade-in { animation: fade 240ms ease-out; }
+    @keyframes fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body class="bg-ink-950 text-slate-100 antialiased min-h-screen">
+  <div x-data="app()" x-init="init()" class="max-w-[1400px] mx-auto px-6 py-6">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center font-bold text-ink-950">PA</div>
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">ProductionAgent</h1>
+          <p class="text-xs text-slate-400">Multi-agent production planning for window cleaning & service businesses</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 text-xs">
+          <span class="w-2 h-2 rounded-full" :class="health.llm_enabled ? 'bg-accent-500' : 'bg-slate-500'"></span>
+          <span x-text="health.llm_enabled ? `LLM: ${health.model}` : 'LLM: rule-based fallback'"></span>
+        </div>
+        <button @click="resetDemo()" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 transition">Reset demo</button>
+      </div>
+    </header>
+
+    <!-- Top control bar -->
+    <section class="grid grid-cols-12 gap-6 mb-6">
+      <div class="col-span-12 lg:col-span-8 bg-gradient-to-br from-ink-900 to-ink-800 border border-ink-700 rounded-xl p-5">
+        <div class="flex items-start justify-between">
+          <div>
+            <h2 class="text-lg font-semibold">Plan this week</h2>
+            <p class="text-sm text-slate-400 mt-1">
+              Six specialist agents coordinate to draft a route-optimized, equipment-validated, time-budgeted weekly plan,
+              then draft per-client confirmation messages.
+            </p>
+          </div>
+          <button
+            @click="planWeek()"
+            :disabled="running"
+            class="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition flex items-center gap-2"
+          >
+            <span x-show="!running">Run agents</span>
+            <span x-show="running" class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-white pulse-dot"></span>
+              Planning…
+            </span>
+          </button>
+        </div>
+
+        <!-- Agent badges -->
+        <div class="flex flex-wrap gap-2 mt-4">
+          <template x-for="a in agentList" :key="a.name">
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs border"
+                 :class="agentColor(a.name, true)">
+              <span class="w-1.5 h-1.5 rounded-full" :class="agentColor(a.name, false)"></span>
+              <span x-text="a.label"></span>
+              <span class="mono text-[10px] opacity-70" x-text="agentCounts[a.name] || 0"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="col-span-12 lg:col-span-4 bg-ink-900 border border-ink-700 rounded-xl p-5">
+        <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Roster</h3>
+        <div class="mt-3 space-y-2">
+          <template x-for="c in crews" :key="c.id">
+            <div class="flex items-center justify-between text-sm">
+              <div>
+                <div class="font-medium" x-text="c.name"></div>
+                <div class="text-xs text-slate-400" x-text="c.members.join(' • ')"></div>
+              </div>
+              <div class="text-right">
+                <div class="mono text-xs" x-text="(c.daily_minutes/60).toFixed(1) + 'h/day'"></div>
+                <div class="text-[10px] text-slate-500" x-text="c.skills.length + ' skills'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main grid -->
+    <section class="grid grid-cols-12 gap-6 mb-6">
+      <!-- Agent live log -->
+      <div class="col-span-12 lg:col-span-5 bg-ink-900 border border-ink-700 rounded-xl flex flex-col" style="min-height: 520px;">
+        <div class="px-5 py-4 border-b border-ink-700 flex items-center justify-between">
+          <div>
+            <h3 class="font-semibold">Agent activity</h3>
+            <p class="text-xs text-slate-400">Live transcript of each agent's reasoning during a plan run</p>
+          </div>
+          <button @click="events = []" class="text-xs text-slate-400 hover:text-slate-200">Clear</button>
+        </div>
+        <div class="p-3 overflow-y-auto scroll-thin flex-1" x-ref="eventsBox" style="max-height: 540px;">
+          <template x-if="events.length === 0">
+            <div class="text-sm text-slate-500 italic p-4">No agent activity yet. Click <span class="text-slate-300 font-medium">Run agents</span> to start.</div>
+          </template>
+          <template x-for="(e, idx) in events" :key="idx">
+            <div class="px-2 py-1.5 fade-in flex items-start gap-2 hover:bg-ink-800/50 rounded">
+              <span class="agent-pill mt-0.5 shrink-0" :class="agentColor(e.agent, true)" x-text="agentShort(e.agent)"></span>
+              <div class="text-xs leading-relaxed">
+                <span class="text-slate-500 mono mr-2" x-text="e.phase"></span>
+                <span class="text-slate-200" x-text="e.message"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Weekly schedule -->
+      <div class="col-span-12 lg:col-span-7 bg-ink-900 border border-ink-700 rounded-xl flex flex-col" style="min-height: 520px;">
+        <div class="px-5 py-4 border-b border-ink-700 flex items-center justify-between">
+          <div>
+            <h3 class="font-semibold">Weekly schedule</h3>
+            <p class="text-xs text-slate-400">
+              <span x-text="plan ? plan.plan.summary || 'Plan ready.' : 'No plan yet.'"></span>
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button @click="openMessages = true" :disabled="!plan" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 disabled:opacity-50">Client messages</button>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-auto scroll-thin">
+          <template x-if="!plan">
+            <div class="text-sm text-slate-500 italic p-6">Run the agents to see the weekly grid here.</div>
+          </template>
+          <template x-if="plan">
+            <div class="p-4">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-xs uppercase tracking-wider text-slate-400">
+                    <th class="text-left py-2 pr-2 font-medium">Crew</th>
+                    <template x-for="d in weekDays" :key="d">
+                      <th class="text-left py-2 px-2 font-medium" x-text="formatDay(d)"></th>
+                    </template>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="c in crews" :key="c.id">
+                    <tr class="border-t border-ink-800 align-top">
+                      <td class="py-2 pr-2">
+                        <div class="font-medium text-sm" x-text="c.name"></div>
+                        <div class="text-[11px] text-slate-500" x-text="c.members.join(', ')"></div>
+                      </td>
+                      <template x-for="d in weekDays" :key="d">
+                        <td class="py-2 px-2" style="min-width: 150px;">
+                          <template x-for="cd in dayFor(c.id, d)" :key="cd.day + cd.crew_id">
+                            <div class="bg-ink-800/70 border rounded-md p-2"
+                                 :class="cd.overbooked ? 'border-rose-500/60' : 'border-ink-700'">
+                              <div class="flex items-center justify-between mb-1">
+                                <span class="text-[10px] uppercase tracking-wider"
+                                      :class="cd.overbooked ? 'text-rose-400' : 'text-slate-400'"
+                                      x-text="cd.overbooked ? 'overbooked' : `${Math.round((cd.utilization||0)*100)}% util`"></span>
+                                <span class="text-[10px] mono text-slate-500" x-text="`${cd.total_work_minutes}+${cd.total_drive_minutes}m`"></span>
+                              </div>
+                              <template x-for="s in cd.stops" :key="s.job_id">
+                                <button @click="selectJob(s.job_id, cd.day, cd.crew_id)" class="block w-full text-left mb-1 last:mb-0">
+                                  <div class="rounded px-2 py-1 hover:bg-ink-700/60 transition"
+                                       :class="jobBgClass(s.job_id)">
+                                    <div class="text-xs font-medium truncate" x-text="jobLabel(s.job_id)"></div>
+                                    <div class="text-[10px] text-slate-400 flex justify-between">
+                                      <span x-text="`#${s.order + 1} • ${s.duration_minutes}m`"></span>
+                                      <span x-text="`+${s.travel_minutes_before}m drive`"></span>
+                                    </div>
+                                  </div>
+                                </button>
+                              </template>
+                            </div>
+                          </template>
+                        </td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom: pending / conflicts -->
+    <section class="grid grid-cols-12 gap-6 mb-6">
+      <div class="col-span-12 lg:col-span-6 bg-ink-900 border border-ink-700 rounded-xl p-5">
+        <h3 class="font-semibold mb-1">Pending & unscheduled</h3>
+        <p class="text-xs text-slate-400 mb-3">Jobs awaiting placement or deferred this week</p>
+        <div class="space-y-2 max-h-72 overflow-auto scroll-thin">
+          <template x-for="j in pendingJobs()" :key="j.id">
+            <button @click="selectJob(j.id)" class="w-full text-left bg-ink-800/70 hover:bg-ink-800 border border-ink-700 rounded-md p-2 transition">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm font-medium" x-text="clientName(j.client_id)"></div>
+                  <div class="text-[11px] text-slate-400 truncate" x-text="`${j.service_type.replaceAll('_',' ')} • ${j.address}`"></div>
+                </div>
+                <div class="text-right">
+                  <div class="text-[10px] mono text-slate-400" x-text="`${j.estimated_minutes}m • diff ${j.difficulty}`"></div>
+                  <div class="text-[10px] uppercase tracking-wider" :class="statusColor(j.status)" x-text="j.status"></div>
+                </div>
+              </div>
+            </button>
+          </template>
+          <template x-if="pendingJobs().length === 0">
+            <div class="text-xs text-slate-500 italic">No pending jobs.</div>
+          </template>
+        </div>
+      </div>
+
+      <div class="col-span-12 lg:col-span-6 bg-ink-900 border border-ink-700 rounded-xl p-5">
+        <h3 class="font-semibold mb-1">Conflicts & warnings</h3>
+        <p class="text-xs text-slate-400 mb-3">Surfaced by the equipment + time-budget agents</p>
+        <div class="space-y-2 max-h-72 overflow-auto scroll-thin">
+          <template x-for="c in (plan?.plan?.conflicts || [])" :key="c">
+            <div class="text-xs flex gap-2 items-start bg-amber-900/20 border border-amber-700/40 rounded-md p-2">
+              <span class="text-amber-400 mt-0.5">!</span>
+              <span class="text-amber-100/90" x-text="c"></span>
+            </div>
+          </template>
+          <template x-if="!plan || (plan.plan.conflicts || []).length === 0">
+            <div class="text-xs text-slate-500 italic">No conflicts.</div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-xs text-slate-500 text-center pb-6">
+      ProductionAgent · Six specialist agents (Geo&nbsp;Cluster, Crew&nbsp;Match, Equipment, Time&nbsp;Budget, Client&nbsp;Comms, Rescheduler) coordinated by a Supervisor.
+    </footer>
+
+    <!-- Job detail modal -->
+    <div x-show="selectedJob" x-transition.opacity class="fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4" @click.self="selectedJob = null" style="display:none;">
+      <div class="bg-ink-900 border border-ink-700 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-auto scroll-thin">
+        <template x-if="selectedJob">
+          <div>
+            <div class="p-5 border-b border-ink-700 flex items-start justify-between">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400" x-text="selectedJob.service_type.replaceAll('_',' ')"></div>
+                <div class="text-lg font-semibold" x-text="clientName(selectedJob.client_id)"></div>
+                <div class="text-xs text-slate-400" x-text="selectedJob.address"></div>
+              </div>
+              <button @click="selectedJob = null" class="text-slate-500 hover:text-slate-200">✕</button>
+            </div>
+            <div class="p-5 grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div class="text-xs text-slate-500">Duration</div>
+                <div x-text="`${selectedJob.estimated_minutes} min`"></div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">Difficulty</div>
+                <div x-text="`${selectedJob.difficulty} / 5`"></div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">Required skills</div>
+                <div x-text="(selectedJob.required_skills || []).join(', ') || '—'"></div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">Required equipment</div>
+                <div x-text="(selectedJob.required_equipment || []).join(', ') || '—'"></div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-xs text-slate-500">Notes</div>
+                <div class="text-sm" x-text="selectedJob.notes || '—'"></div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-xs text-slate-500 mb-1">Draft client message</div>
+                <div class="bg-ink-800 border border-ink-700 rounded-md p-3 text-sm whitespace-pre-wrap" x-text="messageFor(selectedJob.id) || '— No message drafted (job not yet scheduled).'"></div>
+              </div>
+            </div>
+            <div class="p-5 border-t border-ink-700 flex flex-wrap items-center gap-2 justify-end">
+              <button @click="confirmJob(selectedJob.id)" class="text-xs px-3 py-1.5 rounded-md bg-accent-500/20 border border-accent-500/40 text-accent-500 hover:bg-accent-500/30">Mark client-confirmed</button>
+              <button @click="openReschedule = true" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500">Reschedule…</button>
+              <button @click="cancelJob(selectedJob.id)" class="text-xs px-3 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/40 text-rose-300 hover:bg-rose-500/20">Cancel job</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Reschedule modal -->
+    <div x-show="openReschedule" x-transition.opacity class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="openReschedule = false" style="display:none;">
+      <div class="bg-ink-900 border border-ink-700 rounded-xl w-full max-w-lg">
+        <div class="p-5 border-b border-ink-700">
+          <h3 class="font-semibold">Reschedule job</h3>
+          <p class="text-xs text-slate-400">The rescheduler agent will pick a new slot that respects skills, equipment, and capacity, then draft a client note.</p>
+        </div>
+        <div class="p-5 space-y-3">
+          <label class="block">
+            <span class="text-xs text-slate-400">Reason</span>
+            <select x-model="rescheduleReason" class="w-full mt-1 bg-ink-800 border border-ink-700 rounded-md px-3 py-2 text-sm">
+              <option>Forecast: rain all day</option>
+              <option>High wind advisory — no high-rise work</option>
+              <option>Equipment failure (scissor lift)</option>
+              <option>Client unavailable</option>
+              <option>Crew member callout</option>
+              <option>Overrun on previous job</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-xs text-slate-400">Notes (optional)</span>
+            <textarea x-model="rescheduleNotes" rows="3" class="w-full mt-1 bg-ink-800 border border-ink-700 rounded-md px-3 py-2 text-sm"></textarea>
+          </label>
+        </div>
+        <div class="p-5 border-t border-ink-700 flex items-center gap-2 justify-end">
+          <button @click="openReschedule = false" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700">Cancel</button>
+          <button @click="reschedule()" class="text-xs px-3 py-1.5 rounded-md bg-brand-500 hover:bg-brand-600">Run rescheduler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Messages drawer -->
+    <div x-show="openMessages" x-transition.opacity class="fixed inset-0 bg-black/60 z-40 flex items-stretch justify-end" @click.self="openMessages = false" style="display:none;">
+      <div class="bg-ink-900 border-l border-ink-700 w-full max-w-xl h-full overflow-auto scroll-thin">
+        <div class="p-5 border-b border-ink-700 sticky top-0 bg-ink-900 z-10 flex items-center justify-between">
+          <div>
+            <h3 class="font-semibold">Drafted client messages</h3>
+            <p class="text-xs text-slate-400">Drafted by the ClientCommsAgent for each scheduled job</p>
+          </div>
+          <button @click="openMessages = false" class="text-slate-500 hover:text-slate-200">✕</button>
+        </div>
+        <div class="p-5 space-y-4">
+          <template x-for="[jobId, msg] in messageEntries()" :key="jobId">
+            <div class="bg-ink-800/60 border border-ink-700 rounded-md p-3">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-xs text-slate-400" x-text="`${clientName(jobIdToJob(jobId)?.client_id)} · ${jobId}`"></div>
+                <button @click="copy(msg)" class="text-[10px] text-slate-400 hover:text-slate-200">Copy</button>
+              </div>
+              <div class="text-sm whitespace-pre-wrap" x-text="msg"></div>
+            </div>
+          </template>
+          <template x-if="messageEntries().length === 0">
+            <div class="text-sm text-slate-500 italic">No messages drafted yet.</div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function app() {
+      return {
+        crews: [],
+        jobs: [],
+        clients: [],
+        plan: null,
+        events: [],
+        agentCounts: {},
+        running: false,
+        health: { llm_enabled: false },
+        selectedJob: null,
+        openReschedule: false,
+        openMessages: false,
+        rescheduleReason: 'Forecast: rain all day',
+        rescheduleNotes: '',
+        selectedDay: null,
+        selectedCrew: null,
+        agentList: [
+          { name: 'SupervisorAgent', label: 'Supervisor' },
+          { name: 'GeoClusterAgent', label: 'Geo Cluster' },
+          { name: 'CrewMatchAgent', label: 'Crew Match' },
+          { name: 'EquipmentAgent', label: 'Equipment' },
+          { name: 'TimeBudgetAgent', label: 'Time Budget' },
+          { name: 'ClientCommsAgent', label: 'Client Comms' },
+          { name: 'ReschedulerAgent', label: 'Rescheduler' },
+        ],
+
+        async init() {
+          await this.refreshAll();
+          this.health = await (await fetch('/api/health')).json();
+        },
+
+        async refreshAll() {
+          const [j, c, cl, p] = await Promise.all([
+            fetch('/api/jobs').then(r => r.json()),
+            fetch('/api/crews').then(r => r.json()),
+            fetch('/api/clients').then(r => r.json()),
+            fetch('/api/plan').then(r => r.json()),
+          ]);
+          this.jobs = j; this.crews = c; this.clients = cl; this.plan = p;
+        },
+
+        async resetDemo() {
+          await fetch('/api/seed/reset', { method: 'POST' });
+          this.events = [];
+          this.agentCounts = {};
+          this.plan = null;
+          await this.refreshAll();
+        },
+
+        get weekDays() {
+          if (!this.plan) return [];
+          const start = new Date(this.plan.plan.week_start);
+          return Array.from({ length: 5 }, (_, i) => {
+            const d = new Date(start);
+            d.setDate(start.getDate() + i);
+            return d.toISOString().slice(0, 10);
+          });
+        },
+
+        formatDay(iso) {
+          const d = new Date(iso + 'T00:00:00');
+          return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        },
+
+        dayFor(crewId, day) {
+          if (!this.plan) return [];
+          return this.plan.plan.days.filter(cd => cd.crew_id === crewId && cd.day === day);
+        },
+
+        jobLabel(jobId) {
+          const j = this.jobs.find(x => x.id === jobId);
+          if (!j) return jobId;
+          return this.clientName(j.client_id);
+        },
+
+        jobIdToJob(jobId) {
+          return this.jobs.find(x => x.id === jobId);
+        },
+
+        jobBgClass(jobId) {
+          const j = this.jobs.find(x => x.id === jobId);
+          if (!j) return 'bg-ink-900';
+          if (j.status === 'confirmed') return 'bg-accent-500/15 border border-accent-500/40';
+          if (j.status === 'rescheduled') return 'bg-amber-500/15 border border-amber-500/40';
+          if (j.status === 'cancelled') return 'bg-rose-500/15 border border-rose-500/40 opacity-60';
+          return 'bg-ink-700/60';
+        },
+
+        statusColor(s) {
+          return ({
+            pending: 'text-slate-400',
+            scheduled: 'text-brand-400',
+            confirmed: 'text-accent-500',
+            rescheduled: 'text-amber-400',
+            cancelled: 'text-rose-400',
+            complete: 'text-slate-300',
+          })[s] || 'text-slate-400';
+        },
+
+        clientName(clientId) {
+          const c = this.clients.find(x => x.id === clientId);
+          return c ? c.name : clientId;
+        },
+
+        pendingJobs() {
+          return this.jobs.filter(j => j.status === 'pending' || (this.plan?.plan?.unscheduled_job_ids || []).includes(j.id));
+        },
+
+        messageFor(jobId) {
+          return this.plan?.client_messages?.[jobId];
+        },
+
+        messageEntries() {
+          if (!this.plan?.client_messages) return [];
+          return Object.entries(this.plan.client_messages);
+        },
+
+        selectJob(jobId, day = null, crewId = null) {
+          const j = this.jobs.find(x => x.id === jobId);
+          if (!j) return;
+          this.selectedJob = j;
+          this.selectedDay = day;
+          this.selectedCrew = crewId;
+        },
+
+        agentColor(name, withBorder) {
+          const map = {
+            SupervisorAgent: ['text-fuchsia-300', 'bg-fuchsia-500', 'border-fuchsia-500/40 bg-fuchsia-500/10'],
+            GeoClusterAgent: ['text-sky-300', 'bg-sky-500', 'border-sky-500/40 bg-sky-500/10'],
+            CrewMatchAgent: ['text-emerald-300', 'bg-emerald-500', 'border-emerald-500/40 bg-emerald-500/10'],
+            EquipmentAgent: ['text-amber-300', 'bg-amber-500', 'border-amber-500/40 bg-amber-500/10'],
+            TimeBudgetAgent: ['text-indigo-300', 'bg-indigo-500', 'border-indigo-500/40 bg-indigo-500/10'],
+            ClientCommsAgent: ['text-rose-300', 'bg-rose-500', 'border-rose-500/40 bg-rose-500/10'],
+            ReschedulerAgent: ['text-orange-300', 'bg-orange-500', 'border-orange-500/40 bg-orange-500/10'],
+          };
+          const t = map[name] || ['text-slate-300', 'bg-slate-500', 'border-slate-500/40 bg-slate-500/10'];
+          return withBorder ? t[2] + ' ' + t[0] : t[1];
+        },
+
+        agentShort(name) {
+          return ({
+            SupervisorAgent: 'super',
+            GeoClusterAgent: 'geo',
+            CrewMatchAgent: 'crew',
+            EquipmentAgent: 'equip',
+            TimeBudgetAgent: 'budget',
+            ClientCommsAgent: 'comms',
+            ReschedulerAgent: 'resched',
+          })[name] || name;
+        },
+
+        async planWeek() {
+          if (this.running) return;
+          this.running = true;
+          this.events = [];
+          this.agentCounts = {};
+          try {
+            const resp = await fetch('/api/plan/stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const parts = buffer.split('\n\n');
+              buffer = parts.pop();
+              for (const part of parts) {
+                if (!part.startsWith('data:')) continue;
+                const payload = JSON.parse(part.slice(5).trim());
+                if (payload.type === 'event') {
+                  this.events.push(payload.data);
+                  this.agentCounts[payload.data.agent] = (this.agentCounts[payload.data.agent] || 0) + 1;
+                  this.$nextTick(() => {
+                    const box = this.$refs.eventsBox;
+                    if (box) box.scrollTop = box.scrollHeight;
+                  });
+                } else if (payload.type === 'result') {
+                  this.plan = payload.data;
+                  await this.refreshAll();
+                }
+              }
+            }
+          } finally {
+            this.running = false;
+          }
+        },
+
+        async confirmJob(jobId) {
+          await fetch(`/api/jobs/${jobId}/confirm`, { method: 'POST' });
+          await this.refreshAll();
+          this.selectedJob = this.jobs.find(j => j.id === jobId);
+        },
+
+        async cancelJob(jobId) {
+          await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+          this.selectedJob = null;
+          await this.refreshAll();
+        },
+
+        async reschedule() {
+          if (!this.selectedJob) return;
+          this.openReschedule = false;
+          const reason = (this.rescheduleNotes ? this.rescheduleReason + ' — ' + this.rescheduleNotes : this.rescheduleReason);
+          const resp = await fetch('/api/reschedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: this.selectedJob.id, reason }),
+          });
+          const result = await resp.json();
+          // append events to live log
+          for (const e of (result.events || [])) {
+            this.events.push(e);
+            this.agentCounts[e.agent] = (this.agentCounts[e.agent] || 0) + 1;
+          }
+          await this.refreshAll();
+          this.rescheduleNotes = '';
+          this.selectedJob = this.jobs.find(j => j.id === this.selectedJob.id);
+        },
+
+        copy(text) {
+          navigator.clipboard?.writeText(text);
+        },
+      };
+    }
+  </script>
+</body>
+</html>

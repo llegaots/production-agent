@@ -1,0 +1,200 @@
+"""CrewMatchAgent - assigns crews & days to geographic clusters.
+
+The scoring blends three concerns:
+  - Skill fit: do crew members have the certifications jobs need?
+  - Difficulty fit: harder jobs prefer more capable crews
+  - Capacity fit: heavier clusters prefer crews with more daily minutes
+
+It produces a preliminary ``draft_plan`` on the blackboard, a list of
+``{crew_id, day, job_ids}`` tuples. Subsequent agents validate equipment
+and time budgets and may push jobs back into ``unscheduled``.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from ..models import Crew, EquipmentKind, Job
+from ..storage import store
+from .base import Agent, AgentContext, haversine_km, week_days
+
+
+class CrewMatchAgent(Agent):
+    name = "CrewMatchAgent"
+
+    @staticmethod
+    def _crew_covers_skills(crew: Crew, jobs: list[Job]) -> bool:
+        required = {s for j in jobs for s in j.required_skills}
+        return required.issubset(set(crew.skills))
+
+    @staticmethod
+    def _crew_covers_equipment(crew: Crew, jobs: list[Job], equipment_kinds_by_crew: dict[str, set]) -> bool:
+        required = {e for j in jobs for e in j.required_equipment}
+        return required.issubset(equipment_kinds_by_crew.get(crew.id, set()))
+
+    @staticmethod
+    def _score_crew_for_cluster(crew: Crew, jobs: list[Job]) -> float:
+        required_skills = {s for j in jobs for s in j.required_skills}
+        skill_overlap = len(required_skills.intersection(set(crew.skills)))
+        skill_gap = len(required_skills - set(crew.skills))
+        avg_difficulty = sum(j.difficulty for j in jobs) / max(1, len(jobs))
+        crew_difficulty_capacity = 1 + len(crew.skills)
+
+        score = 0.0
+        score += skill_overlap * 3.0
+        score -= skill_gap * 50.0  # very strong penalty - skills are mandatory
+        score += min(0.0, crew_difficulty_capacity - avg_difficulty) * 0.5
+        # Specialty bonus: prefer cheaper crews for low-difficulty work, and
+        # expensive specialty crews for high-difficulty work.
+        if avg_difficulty <= 2 and crew.hourly_cost <= 130:
+            score += 2.0
+        if avg_difficulty >= 4 and crew.hourly_cost >= 180:
+            score += 2.0
+        return score
+
+    @staticmethod
+    def _ordered_for_route(crew: Crew, jobs: list[Job]) -> list[Job]:
+        """Greedy nearest-neighbor from the crew's base."""
+        remaining = jobs[:]
+        ordered: list[Job] = []
+        cur_lat, cur_lng = crew.base_lat, crew.base_lng
+        while remaining:
+            nxt = min(remaining, key=lambda j: haversine_km(cur_lat, cur_lng, j.lat, j.lng))
+            ordered.append(nxt)
+            cur_lat, cur_lng = nxt.lat, nxt.lng
+            remaining.remove(nxt)
+        return ordered
+
+    async def run(self, ctx: AgentContext) -> None:
+        clusters: list[dict] = ctx.blackboard.get("geo_clusters", [])
+        jobs_by_id = {j.id: j for j in ctx.jobs}
+        days = week_days(ctx.week_start)
+        await ctx.emit(
+            self.name,
+            "start",
+            f"Matching {len(clusters)} clusters across {len(ctx.crews)} crews over {len(days)} working days.",
+        )
+
+        # Pre-compute equipment kinds per crew once
+        crew_equipment_kinds: dict[str, set[EquipmentKind]] = {}
+        for c in ctx.crews:
+            kinds: set[EquipmentKind] = set()
+            for eid in c.equipment_ids:
+                e = store.get_equipment(eid)
+                if e:
+                    kinds.add(e.kind)
+            crew_equipment_kinds[c.id] = kinds
+
+        used: dict[tuple[str, date], int] = {}
+        draft_plan: list[dict] = []
+        unscheduled: list[str] = []
+
+        # Heaviest cluster first
+        order = sorted(
+            range(len(clusters)),
+            key=lambda i: -sum(jobs_by_id[j].estimated_minutes for j in clusters[i]["job_ids"]),
+        )
+
+        def place(jobs: list[Job], emit_phase: str) -> bool:
+            """Place a contiguous batch of jobs on the best (crew, day) slot.
+
+            Returns True if placed (all jobs together), False otherwise.
+            """
+            total = sum(j.estimated_minutes for j in jobs)
+            # Hard-filter crews by skills + equipment
+            eligible = [
+                c
+                for c in ctx.crews
+                if self._crew_covers_skills(c, jobs)
+                and self._crew_covers_equipment(c, jobs, crew_equipment_kinds)
+            ]
+            if not eligible:
+                return False
+
+            # Reserve a rough drive budget: 20 min round-trip to area + 15 min
+            # between stops. The TimeBudgetAgent computes the real number; this
+            # is just enough headroom that we don't overbook by a wide margin.
+            drive_budget = 20 + 15 * max(0, len(jobs) - 1)
+
+            candidates: list[tuple[float, Crew, date]] = []
+            for crew in eligible:
+                fit = self._score_crew_for_cluster(crew, jobs)
+                for day in days:
+                    used_min = used.get((crew.id, day), 0)
+                    if used_min + total + drive_budget > crew.daily_minutes:
+                        continue
+                    remaining = crew.daily_minutes - used_min
+                    score = fit + 0.005 * remaining
+                    candidates.append((score, crew, day))
+
+            if not candidates:
+                return False
+
+            candidates.sort(key=lambda t: -t[0])
+            _, crew, day = candidates[0]
+
+            ordered_jobs = self._ordered_for_route(crew, jobs)
+            draft_plan.append(
+                {"crew_id": crew.id, "day": day, "job_ids": [j.id for j in ordered_jobs]}
+            )
+            used[(crew.id, day)] = used.get((crew.id, day), 0) + total
+            return True
+
+        for idx in order:
+            cluster = clusters[idx]
+            cluster_jobs = [jobs_by_id[j] for j in cluster["job_ids"]]
+            total_minutes = sum(j.estimated_minutes for j in cluster_jobs)
+
+            if place(cluster_jobs, "assign"):
+                last = draft_plan[-1]
+                crew_name = next(c.name for c in ctx.crews if c.id == last["crew_id"])
+                await ctx.emit(
+                    self.name,
+                    "assign",
+                    f"Cluster of {len(cluster_jobs)} jobs ({total_minutes} min) -> {crew_name} on {last['day'].isoformat()}.",
+                    detail={
+                        "crew_id": last["crew_id"],
+                        "day": last["day"].isoformat(),
+                        "job_ids": last["job_ids"],
+                        "skill_match": list({s.value for j in cluster_jobs for s in j.required_skills}),
+                    },
+                )
+                continue
+
+            # Cluster didn't fit as a unit. Split it and place each job individually.
+            await ctx.emit(
+                self.name,
+                "split",
+                f"Splitting cluster of {len(cluster_jobs)} jobs ({total_minutes} min) — no single crew/day fits.",
+            )
+            for j in sorted(cluster_jobs, key=lambda x: -x.estimated_minutes):
+                if place([j], "single"):
+                    last = draft_plan[-1]
+                    crew_name = next(c.name for c in ctx.crews if c.id == last["crew_id"])
+                    await ctx.emit(
+                        self.name,
+                        "single",
+                        f"Placed split job {j.id} ({j.estimated_minutes}m, diff {j.difficulty}) -> {crew_name} on {last['day'].isoformat()}.",
+                    )
+                else:
+                    unscheduled.append(j.id)
+                    await ctx.emit(
+                        self.name,
+                        "warn",
+                        f"Could not place job {j.id} this week (skills/equipment/capacity).",
+                    )
+
+        # Merge multiple draft entries for the same crew/day
+        merged: dict[tuple[str, date], list[str]] = {}
+        for entry in draft_plan:
+            key = (entry["crew_id"], entry["day"])
+            merged.setdefault(key, []).extend(entry["job_ids"])
+
+        ctx.blackboard["draft_plan"] = [
+            {"crew_id": k[0], "day": k[1], "job_ids": v} for k, v in merged.items()
+        ]
+        ctx.blackboard["unscheduled"] = unscheduled
+        await ctx.emit(
+            self.name,
+            "done",
+            f"Drafted {len(merged)} crew-days; {len(unscheduled)} jobs deferred.",
+        )
