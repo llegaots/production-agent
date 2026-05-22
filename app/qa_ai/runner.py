@@ -16,6 +16,7 @@ from ..vision import ACCEPTANCE_CRITERIA, PRODUCTION_MANAGER_VISION
 from ..cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .executor import apply_owner_retry, execute_case
 from .llm_agents import critique_schedule, design_test_case, synthesize_run
+from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case
 from .schedule_snapshot import plan_result_context
 
@@ -54,6 +55,14 @@ class AIQATeamRunner:
             "Starting reflective AI QA (operator personas).",
             detail={"max_cases": _max_cases(), "max_iterations": _max_iterations()},
         )
+
+        llm_block = await probe_llm_for_qa()
+        if llm_block:
+            return await self._finish_aborted(
+                started,
+                llm_block,
+                auto_cursor_handoff=auto_cursor_handoff,
+            )
 
         succeeded_history = fingerprints_for_prompt()
         case_results: list[dict[str, Any]] = []
@@ -200,19 +209,38 @@ class AIQATeamRunner:
                         f"[{c.get('fingerprint')}] {pc.get('job_id')}: {pc.get('question')}"
                     )
 
-        finished = datetime.now(timezone.utc).isoformat()
+        if not recommendations:
+            if llm_errors:
+                recommendations = [llm_errors[0]]
+            elif not case_results:
+                recommendations = [
+                    "AI QA did not run any cases (finished too fast). "
+                    "Check Anthropic credits or use Legacy QA."
+                ]
+            else:
+                recommendations = ["Review case critiques in this report."]
+        else:
+            recommendations = recommendations[:25]
+
+        finished_dt = datetime.now(timezone.utc)
+        started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        duration = round((finished_dt - started_dt).total_seconds(), 2)
         report = QAReport(
             run_id=self.audit.run_id,
             started_at=started,
-            finished_at=finished,
+            finished_at=finished_dt.isoformat(),
             overall_score=overall,
             passed=passed,
             scheduling_modes_tested=[],
             criteria=[],
             scenarios=case_results,
             db_checks=[],
-            recommendations=recommendations[:25] or ["AI QA completed — review case critiques in report."],
+            recommendations=recommendations,
             audit_path=str(REPORTS_DIR / f"audit_{self.audit.run_id}.jsonl"),
+            mode="ai",
+            error_message=llm_errors[0] if llm_errors else "",
+            duration_seconds=duration,
+            aborted=bool(llm_errors),
         )
         report.report_json_path = str(
             self._write_json_report(report, case_results, synthesizer, llm_errors=llm_errors)
@@ -236,6 +264,51 @@ class AIQATeamRunner:
             "done",
             f"AI QA: {passed_cases}/{len(case_results)} cases passed, score {overall}.",
         )
+        return report
+
+    async def _finish_aborted(
+        self,
+        started: str,
+        error: str,
+        *,
+        auto_cursor_handoff: Optional[bool] = None,
+    ) -> QAReport:
+        """Return immediately when LLM is unusable (avoids fake 1-second 'complete' runs)."""
+        finished = datetime.now(timezone.utc).isoformat()
+        self.audit.log("AIQATeam", "aborted", error, level="warning")
+        report = QAReport(
+            run_id=self.audit.run_id,
+            started_at=started,
+            finished_at=finished,
+            overall_score=0,
+            passed=False,
+            scheduling_modes_tested=[],
+            recommendations=[
+                error,
+                "Click **Legacy QA** to test scheduling without Claude (15–30 seconds).",
+                "After fixing billing, restart ./run.sh and run **Run AI QA suite** again (2–5 min).",
+            ],
+            audit_path=str(REPORTS_DIR / f"audit_{self.audit.run_id}.jsonl"),
+            mode="ai",
+            error_message=error,
+            duration_seconds=0.5,
+            aborted=True,
+        )
+        report.report_json_path = str(
+            self._write_json_report(report, [], {}, llm_errors=[error])
+        )
+        handoff_path = self._write_handoff(report, [], {})
+        report.cursor_handoff_path = str(handoff_path)
+        launch = await trigger_automatic_handoff(
+            run_id=report.run_id,
+            handoff_path=handoff_path,
+            passed=False,
+            overall_score=0,
+            audit=self.audit,
+            auto_handoff=auto_cursor_handoff,
+        )
+        report.cursor_handoff = launch.to_dict()
+        attach_handoff_to_report_json(Path(report.report_json_path), launch)
         return report
 
     def _write_json_report(

@@ -31,6 +31,7 @@ from .models import (
 )
 from .cursor_client import cursor_cloud
 from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
+from .qa_jobs import job_status_payload, start_background_qa
 from .qa_team import QATeamRunner, list_qa_reports
 from .reorganize import parse_reorganize_instruction
 from .row_import import build_import_batch, materialize_import
@@ -220,6 +221,7 @@ class QARunRequest(BaseModel):
     reset_seed: bool = True
     auto_cursor_handoff: Optional[bool] = None
     mode: str = "ai"  # ai | legacy
+    background: bool = True  # avoid proxy/browser timeout on long AI runs
 
 
 @app.post("/api/plan", response_model=PlanResult)
@@ -518,6 +520,15 @@ async def qa_run(req: QARunRequest) -> dict:
             status_code=400,
             detail="AI QA requires ANTHROPIC_API_KEY or OPENAI_API_KEY in .env (then restart ./run.sh). Use mode=legacy without LLM.",
         )
+    if req.background:
+        try:
+            return await start_background_qa(
+                reset_seed=req.reset_seed,
+                auto_cursor_handoff=req.auto_cursor_handoff,
+                mode=mode,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"QA start failed: {exc}") from exc
     try:
         runner = QATeamRunner()
         report = await runner.run_full_suite(
@@ -532,6 +543,12 @@ async def qa_run(req: QARunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"QA run failed: {exc}") from exc
+
+
+@app.get("/api/qa/status/{run_id}")
+async def qa_run_status(run_id: str) -> dict:
+    """Poll a background QA job (or load a finished report from disk)."""
+    return job_status_payload(run_id)
 
 
 @app.post("/api/qa/handoff/{run_id}")

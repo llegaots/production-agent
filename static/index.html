@@ -372,11 +372,17 @@
           <h2 class="text-lg font-semibold">QA agent team</h2>
           <p class="text-[10px] text-neutral-500">AI operator reviews real schedules — critical “why this day?” feedback, reflective retries, novel cases.</p>
         </div>
-        <div x-show="qaApiReady === false" class="mx-4 mt-2 p-2 rounded border border-red-500/40 bg-red-950/40 text-xs text-red-200">
+        <div x-show="apiReachable === false" class="w-full p-2 rounded border border-red-500/40 bg-red-950/40 text-xs text-red-200">
+          <strong>Cannot reach API</strong> at <span class="mono" x-text="apiOrigin || window.location.origin"></span>.
+          Run <code class="mono">./run.sh</code> in the project folder, then open that URL (not a saved HTML file).
+          In Cursor remote: Ports → forward <strong>3000</strong> → open the forwarded link.
+        </div>
+        <div x-show="qaApiReady === false && apiReachable !== false" class="w-full p-2 rounded border border-red-500/40 bg-red-950/40 text-xs text-red-200">
           QA API not found (404). The server is running <strong>old code</strong>. In the project folder run:
           <code class="mono block mt-1">./run.sh</code>
           Then hard-refresh this page (Ctrl+Shift+R).
         </div>
+        <p class="text-[10px] text-neutral-500 w-full" x-show="qaRunning && qaProgressMessage" x-text="qaProgressMessage"></p>
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">LLM on · AI QA</span>
           <span class="text-[10px] text-amber-400" x-show="!config.llm_enabled && qaApiReady">No LLM key — use legacy QA</span>
@@ -400,14 +406,18 @@
               <span class="text-xs px-2 py-0.5 rounded" :class="qaReport.passed ? 'bg-accent-500/20 text-accent-500' : 'bg-amber-500/20 text-amber-300'"
                     x-text="qaReport.passed ? 'PASS' : 'NEEDS WORK'"></span>
             </div>
-            <p class="text-xs text-neutral-400 mono" x-show="qaReport.run_id && qaReport.run_id !== 'failed'" x-text="'Run ' + qaReport.run_id"></p>
+            <p class="text-xs text-neutral-400 mono" x-show="qaReport.run_id && qaReport.run_id !== 'failed'" x-text="'Run ' + qaReport.run_id + (qaReport.duration_seconds ? ' · ' + qaReport.duration_seconds + 's' : '')"></p>
+            <p class="text-xs text-amber-400" x-show="qaReport.duration_seconds && qaReport.duration_seconds < 10 && !(qaReport.ai_cases?.length || qaReport.scenarios?.length)">
+              Finished in under 10s with no cases — the AI tester did not actually run (usually Anthropic credits or API error below).
+            </p>
             <div x-show="qaReport.error_message" class="mt-2 p-2 rounded border border-red-500/40 bg-red-950/30 text-sm text-red-200 whitespace-pre-wrap" x-text="qaReport.error_message"></div>
+            <div x-show="!qaReport.error_message && qaReport.aborted && qaReport.recommendations?.length" class="mt-2 p-2 rounded border border-red-500/40 bg-red-950/30 text-sm text-red-200 whitespace-pre-wrap" x-text="qaReport.recommendations[0]"></div>
             <p class="text-[10px] text-neutral-500 mt-1" x-show="qaReport.mode === 'ai' && !qaReport.error_message">Mode: AI operator loop</p>
             <template x-if="qaReport.recommendations?.length && (!qaReport.ai_cases?.length && !qaReport.scenarios?.length)">
               <div class="mt-3 text-sm text-amber-200/90">
                 <p class="font-medium text-amber-300 mb-1">What happened</p>
                 <template x-for="(rec, ri) in qaReport.recommendations" :key="ri">
-                  <p class="text-xs mt-1" x-text="rec"></p>
+                  <p class="text-xs mt-1 whitespace-pre-wrap" x-text="rec"></p>
                 </template>
               </div>
             </template>
@@ -562,12 +572,17 @@
         schedulingMode: 'geo_first',
         qaRunning: false,
         qaApiReady: null,
+        apiReachable: null,
+        apiOrigin: '',
+        qaProgressMessage: '',
         qaReport: null,
         qaReportsList: [],
         _msgId: 0,
         _traceKey: 0,
 
         async init() {
+          this.apiOrigin = window.location.origin;
+          await this.checkQaApi();
           const [j, c, cl, draft, confirmed, cfg, pref] = await Promise.all([
             fetch('/api/jobs').then(r => r.json()),
             fetch('/api/crews').then(r => r.json()),
@@ -829,14 +844,35 @@
         async checkQaApi() {
           try {
             const r = await fetch('/api/qa/ping');
+            this.apiReachable = true;
             this.qaApiReady = r.ok;
             if (r.ok) {
               const h = await fetch('/api/health').then(x => x.json()).catch(() => ({}));
               if (h.qa_api !== true) this.qaApiReady = false;
             }
           } catch (_) {
+            this.apiReachable = false;
             this.qaApiReady = false;
           }
+        },
+
+        async pollQaUntilDone(runId, maxMs = 600000) {
+          const started = Date.now();
+          while (Date.now() - started < maxMs) {
+            await new Promise(r => setTimeout(r, 2000));
+            const sr = await fetch('/api/qa/status/' + runId);
+            if (!sr.ok) continue;
+            const st = await sr.json();
+            const p = st.progress || {};
+            if (p.last_message) {
+              this.qaProgressMessage = (p.last_agent ? p.last_agent + ': ' : '') + p.last_message;
+            }
+            if (st.status === 'complete' && st.report) return st.report;
+            if (st.status === 'error') {
+              throw new Error(st.error || 'QA background job failed');
+            }
+          }
+          throw new Error('QA timed out after ' + Math.round(maxMs / 60000) + ' minutes — check reports/qa_' + runId + '.json on the server');
         },
 
         async runQaSuite(mode) {
@@ -873,11 +909,17 @@
           this.qaRunning = true;
           this.tab = 'qa';
           this.qaReport = null;
+          this.qaProgressMessage = 'Starting QA…';
           try {
             const r = await fetch('/api/qa/run', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ reset_seed: true, mode: qaMode }),
+              body: JSON.stringify({
+                reset_seed: true,
+                mode: qaMode,
+                auto_cursor_handoff: true,
+                background: true,
+              }),
             });
             let data = {};
             const text = await r.text();
@@ -887,14 +929,26 @@
               throw new Error(text?.slice(0, 300) || `HTTP ${r.status}`);
             }
             if (!r.ok) throw new Error(this.parseApiError(data, `HTTP ${r.status}`));
+            if (data.status === 'running' && data.run_id) {
+              this.qaProgressMessage = 'QA running in background (polling every 2s)…';
+              this.qaReport = {
+                passed: false,
+                overall_score: 0,
+                run_id: data.run_id,
+                recommendations: ['QA in progress — ' + (qaMode === 'ai' ? 'typically 2–5 min' : '15–30 sec')],
+              };
+              data = await this.pollQaUntilDone(data.run_id);
+            }
             this.qaReport = data;
+            this.qaProgressMessage = '';
             await this.loadQaReports();
           } catch (e) {
+            const origin = window.location.origin || 'this page';
             const hint = String(e.message || e).includes('Failed to fetch')
-              ? '\n\nThe browser could not reach the API.\n'
+              ? '\n\nThe browser could not reach the API at ' + origin + '.\n'
                 + '• Local: in the project folder run ./run.sh, then open http://127.0.0.1:3000\n'
-                + '• Cursor remote/cloud: open Ports, forward port 3000, use the forwarded URL (not an old tab).\n'
-                + '• Check: curl http://127.0.0.1:3000/api/qa/ping should return {"qa":true}'
+                + '• Cursor remote/cloud: Ports → forward 3000 → open that URL (not an old tab).\n'
+                + '• On the machine running the server: curl http://127.0.0.1:3000/api/qa/ping → {"qa":true}'
               : '';
             this.qaReport = {
               passed: false,
@@ -903,6 +957,7 @@
               run_id: 'failed',
               error_message: (e.message || String(e)) + hint,
             };
+            this.qaProgressMessage = '';
           } finally {
             this.qaRunning = false;
           }

@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.qa_ai.runner import AIQATeamRunner
@@ -7,16 +8,17 @@ from app.seed import seed
 
 def test_ai_qa_reflective_loop(monkeypatch):
     seed(reset=True)
+    uid = uuid.uuid4().hex[:8]
 
     case_a = {
-        "fingerprint": "rain_delay_pierrefonds",
+        "fingerprint": f"test_rain_delay_{uid}",
         "title": "Rain delay cluster",
         "persona_story": "Owner after storm",
         "steps": [{"action": "plan", "scheduling_mode": "geo_first"}],
         "what_good_looks_like": "Jobs regrouped by zone",
     }
     case_b = {
-        "fingerprint": "test_fill_trucks_unique",
+        "fingerprint": f"test_fill_trucks_{uid}",
         "title": "Fill trucks",
         "persona_story": "Slow Monday",
         "steps": [{"action": "reorganize", "instruction": "fill crew days"}],
@@ -102,14 +104,16 @@ def test_ai_qa_reflective_loop(monkeypatch):
 
         return CursorLaunchResult(launched=False, skipped_reason="test")
 
-    with patch("app.qa_ai.runner.design_test_case", _design):
-        with patch("app.qa_ai.runner.critique_schedule", _critique):
-            with patch("app.qa_ai.runner.synthesize_run", _synth):
-                with patch("app.qa_ai.runner.trigger_automatic_handoff", _noop_handoff):
-                    with patch.dict("os.environ", {"QA_MAX_CASES": "2", "QA_MAX_ITERATIONS": "2"}):
-                        report = asyncio.run(
-                            AIQATeamRunner().run(auto_cursor_handoff=False)
-                        )
+    with patch("app.qa_ai.runner.load_succeeded_cases", return_value=[]):
+        with patch("app.qa_ai.runner.probe_llm_for_qa", AsyncMock(return_value=None)):
+            with patch("app.qa_ai.runner.design_test_case", _design):
+                with patch("app.qa_ai.runner.critique_schedule", _critique):
+                    with patch("app.qa_ai.runner.synthesize_run", _synth):
+                        with patch("app.qa_ai.runner.trigger_automatic_handoff", _noop_handoff):
+                            with patch.dict("os.environ", {"QA_MAX_CASES": "2", "QA_MAX_ITERATIONS": "2"}):
+                                report = asyncio.run(
+                                    AIQATeamRunner().run(auto_cursor_handoff=False)
+                                )
 
     assert report.run_id
     assert len(report.scenarios) >= 1

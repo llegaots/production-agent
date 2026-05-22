@@ -50,6 +50,10 @@ class QAReport:
     report_json_path: str = ""
     cursor_handoff_path: str = ""
     cursor_handoff: dict[str, Any] = field(default_factory=dict)
+    mode: str = "ai"
+    error_message: str = ""
+    duration_seconds: float = 0.0
+    aborted: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +71,10 @@ class QAReport:
             "report_json_path": self.report_json_path,
             "cursor_handoff_path": self.cursor_handoff_path,
             "cursor_handoff": self.cursor_handoff,
+            "mode": self.mode,
+            "error_message": self.error_message,
+            "duration_seconds": self.duration_seconds,
+            "aborted": self.aborted,
             "vision_excerpt": PRODUCTION_MANAGER_VISION[:400] + "…",
         }
 
