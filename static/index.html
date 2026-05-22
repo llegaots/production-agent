@@ -3,590 +3,355 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ProductionAgent — multi-agent scheduling for service businesses</title>
+  <title>ProductionAgent</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
-          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
           colors: {
-            ink: { 950: '#0b1020', 900: '#10172a', 800: '#1a2440', 700: '#2a3454' },
-            brand: { 500: '#5b8def', 600: '#3e6ee0', 400: '#7ea4f4' },
-            accent: { 500: '#3ddc97' },
+            surface: { 950: '#0d0d0d', 900: '#171717', 800: '#262626', 700: '#404040' },
+            accent: { 500: '#10a37f' },
           },
         },
       },
     };
   </script>
   <style>
-    body { font-family: 'Inter', system-ui, sans-serif; }
-    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-    .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-    .scroll-thin::-webkit-scrollbar-thumb { background: #2a3454; border-radius: 6px; }
-    .agent-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600; }
-    .pulse-dot { animation: pulse 1.4s infinite ease-in-out; }
-    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-    .fade-in { animation: fade 240ms ease-out; }
-    @keyframes fade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+    body { font-family: Inter, system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .scroll-thin::-webkit-scrollbar { width: 6px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
+    @keyframes blink { 50% { opacity: 0.3; } }
+    .cursor-blink { animation: blink 1s step-end infinite; }
+    [x-cloak] { display: none !important; }
   </style>
 </head>
-<body class="bg-ink-950 text-slate-100 antialiased min-h-screen">
-  <div x-data="app()" x-init="init()" class="max-w-[1400px] mx-auto px-6 py-6">
+<body class="bg-surface-950 text-neutral-100 h-screen overflow-hidden" x-data="app()" x-init="init()">
 
-    <!-- Header -->
-    <header class="flex items-center justify-between mb-6">
+  <!-- Shell -->
+  <div class="flex flex-col h-full max-w-5xl mx-auto w-full">
+
+    <!-- Top bar -->
+    <header class="shrink-0 flex items-center justify-between px-4 py-3 border-b border-surface-800">
       <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center font-bold text-ink-950">PA</div>
-        <div>
-          <h1 class="text-xl font-semibold tracking-tight">ProductionAgent</h1>
-          <p class="text-xs text-slate-400">Multi-agent production planning for window cleaning & service businesses</p>
-        </div>
+        <div class="w-8 h-8 rounded-md bg-accent-500 flex items-center justify-center text-surface-950 font-bold text-sm">PA</div>
+        <span class="font-semibold text-sm">ProductionAgent</span>
       </div>
-      <div class="flex items-center gap-2">
-        <div class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 text-xs">
-          <span class="w-2 h-2 rounded-full" :class="health.llm_enabled ? 'bg-accent-500' : 'bg-slate-500'"></span>
-          <span x-text="health.llm_enabled ? `LLM: ${health.model}` : 'LLM: rule-based fallback'"></span>
-        </div>
-        <div class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 text-xs">
-          <span class="w-2 h-2 rounded-full" :class="health.supabase_enabled ? 'bg-accent-500' : 'bg-slate-500'"></span>
-          <span x-text="health.supabase_enabled ? 'Supabase: persisting' : 'Supabase: in-memory only'"></span>
-        </div>
-        <button @click="resetDemo()" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 transition">Reset demo</button>
-      </div>
+      <nav class="flex items-center gap-1 bg-surface-900 rounded-lg p-1 text-sm">
+        <button @click="tab = 'chat'" class="px-4 py-1.5 rounded-md transition"
+                :class="tab === 'chat' ? 'bg-surface-800 text-white' : 'text-neutral-400 hover:text-neutral-200'">Chat</button>
+        <button @click="tab = 'schedule'" class="px-4 py-1.5 rounded-md transition flex items-center gap-2"
+                :class="tab === 'schedule' ? 'bg-surface-800 text-white' : 'text-neutral-400 hover:text-neutral-200'">
+          Live schedule
+          <span x-show="confirmedPlan" class="w-1.5 h-1.5 rounded-full bg-accent-500"></span>
+        </button>
+      </nav>
+      <button @click="showSettings = true" class="text-xs text-neutral-400 hover:text-neutral-200 px-2 py-1">API keys</button>
     </header>
 
-    <!-- Top control bar -->
-    <section class="grid grid-cols-12 gap-6 mb-6">
-      <div class="col-span-12 lg:col-span-8 bg-gradient-to-br from-ink-900 to-ink-800 border border-ink-700 rounded-xl p-5">
-        <div class="flex items-start justify-between">
-          <div>
-            <h2 class="text-lg font-semibold">Plan this week</h2>
-            <p class="text-sm text-slate-400 mt-1">
-              Six specialist agents coordinate to draft a route-optimized, equipment-validated, time-budgeted weekly plan,
-              then draft per-client confirmation messages.
+    <!-- ========== CHAT TAB ========== -->
+    <div x-show="tab === 'chat'" class="flex flex-col flex-1 min-h-0">
+      <div class="flex-1 overflow-y-auto scroll-thin px-4 py-6 space-y-6" x-ref="chatScroll">
+
+        <!-- Welcome -->
+        <template x-if="messages.length === 0">
+          <div class="text-center max-w-lg mx-auto pt-12">
+            <h2 class="text-xl font-semibold mb-2">Plan your production week</h2>
+            <p class="text-sm text-neutral-400 mb-6">
+              Ask me to plan the week, reschedule a job, or confirm the schedule.
+              You'll see each agent's reasoning as a trace while they work.
             </p>
-          </div>
-          <button
-            @click="planWeek()"
-            :disabled="running"
-            class="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition flex items-center gap-2"
-          >
-            <span x-show="!running">Run agents</span>
-            <span x-show="running" class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full bg-white pulse-dot"></span>
-              Planning…
-            </span>
-          </button>
-        </div>
-
-        <!-- Agent badges -->
-        <div class="flex flex-wrap gap-2 mt-4">
-          <template x-for="a in agentList" :key="a.name">
-            <div class="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs border"
-                 :class="agentColor(a.name, true)">
-              <span class="w-1.5 h-1.5 rounded-full" :class="agentColor(a.name, false)"></span>
-              <span x-text="a.label"></span>
-              <span class="mono text-[10px] opacity-70" x-text="agentCounts[a.name] || 0"></span>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <div class="col-span-12 lg:col-span-4 bg-ink-900 border border-ink-700 rounded-xl p-5">
-        <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Roster</h3>
-        <div class="mt-3 space-y-2">
-          <template x-for="c in crews" :key="c.id">
-            <div class="flex items-center justify-between text-sm">
-              <div>
-                <div class="font-medium" x-text="c.name"></div>
-                <div class="text-xs text-slate-400" x-text="c.members.join(' • ')"></div>
-              </div>
-              <div class="text-right">
-                <div class="mono text-xs" x-text="(c.daily_minutes/60).toFixed(1) + 'h/day'"></div>
-                <div class="text-[10px] text-slate-500" x-text="c.skills.length + ' skills'"></div>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- Main grid -->
-    <section class="grid grid-cols-12 gap-6 mb-6">
-      <!-- Agent live log -->
-      <div class="col-span-12 lg:col-span-5 bg-ink-900 border border-ink-700 rounded-xl flex flex-col" style="min-height: 520px;">
-        <div class="px-5 py-4 border-b border-ink-700 flex items-center justify-between">
-          <div>
-            <h3 class="font-semibold">Agent activity</h3>
-            <p class="text-xs text-slate-400">Live transcript of each agent's reasoning during a plan run</p>
-          </div>
-          <button @click="events = []" class="text-xs text-slate-400 hover:text-slate-200">Clear</button>
-        </div>
-        <div class="p-3 overflow-y-auto scroll-thin flex-1" x-ref="eventsBox" style="max-height: 540px;">
-          <template x-if="events.length === 0">
-            <div class="text-sm text-slate-500 italic p-4">No agent activity yet. Click <span class="text-slate-300 font-medium">Run agents</span> to start.</div>
-          </template>
-          <template x-for="(e, idx) in events" :key="idx">
-            <div class="px-2 py-1.5 fade-in flex items-start gap-2 hover:bg-ink-800/50 rounded">
-              <span class="agent-pill mt-0.5 shrink-0" :class="agentColor(e.agent, true)" x-text="agentShort(e.agent)"></span>
-              <div class="text-xs leading-relaxed">
-                <span class="text-slate-500 mono mr-2" x-text="e.phase"></span>
-                <span class="text-slate-200" x-text="e.message"></span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- Weekly schedule -->
-      <div class="col-span-12 lg:col-span-7 bg-ink-900 border border-ink-700 rounded-xl flex flex-col" style="min-height: 520px;">
-        <div class="px-5 py-4 border-b border-ink-700 flex items-start justify-between gap-4">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-1">
-              <h3 class="font-semibold">Weekly schedule</h3>
-              <template x-if="plan?.review">
-                <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold"
-                      :class="riskBadgeClass(plan.review.risk_score)"
-                      x-text="`risk ${plan.review.risk_score}/100`"></span>
-              </template>
-            </div>
-            <p class="text-xs text-slate-400" x-text="plan?.review?.narrative || plan?.plan?.summary || 'No plan yet.'"></p>
-            <template x-if="plan?.review?.top_concern">
-              <p class="text-[11px] mt-1 text-amber-300/90">
-                <span class="font-medium">Top concern:</span>
-                <span x-text="plan.review.top_concern"></span>
-                <span x-show="plan.review.recommendation" class="text-slate-400"> — </span>
-                <span x-show="plan.review.recommendation" class="text-slate-300" x-text="plan.review.recommendation"></span>
-              </p>
-            </template>
-          </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <button @click="openMessages = true" :disabled="!plan" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 disabled:opacity-50">Client messages</button>
-          </div>
-        </div>
-
-        <div class="flex-1 overflow-auto scroll-thin">
-          <template x-if="!plan">
-            <div class="text-sm text-slate-500 italic p-6">Run the agents to see the weekly grid here.</div>
-          </template>
-          <template x-if="plan">
-            <div class="p-4">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-xs uppercase tracking-wider text-slate-400">
-                    <th class="text-left py-2 pr-2 font-medium">Crew</th>
-                    <template x-for="d in weekDays" :key="d">
-                      <th class="text-left py-2 px-2 font-medium" x-text="formatDay(d)"></th>
-                    </template>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="c in crews" :key="c.id">
-                    <tr class="border-t border-ink-800 align-top">
-                      <td class="py-2 pr-2">
-                        <div class="font-medium text-sm" x-text="c.name"></div>
-                        <div class="text-[11px] text-slate-500" x-text="c.members.join(', ')"></div>
-                      </td>
-                      <template x-for="d in weekDays" :key="d">
-                        <td class="py-2 px-2" style="min-width: 150px;">
-                          <template x-for="cd in dayFor(c.id, d)" :key="cd.day + cd.crew_id">
-                            <div class="bg-ink-800/70 border rounded-md p-2"
-                                 :class="cd.overbooked ? 'border-rose-500/60' : 'border-ink-700'">
-                              <div class="flex items-center justify-between mb-1">
-                                <span class="text-[10px] uppercase tracking-wider"
-                                      :class="cd.overbooked ? 'text-rose-400' : 'text-slate-400'"
-                                      x-text="cd.overbooked ? 'overbooked' : `${Math.round((cd.utilization||0)*100)}% util`"></span>
-                                <span class="text-[10px] mono text-slate-500" x-text="`${cd.total_work_minutes}+${cd.total_drive_minutes}m`"></span>
-                              </div>
-                              <template x-for="s in cd.stops" :key="s.job_id">
-                                <button @click="selectJob(s.job_id, cd.day, cd.crew_id)" class="block w-full text-left mb-1 last:mb-0">
-                                  <div class="rounded px-2 py-1 hover:bg-ink-700/60 transition"
-                                       :class="jobBgClass(s.job_id)">
-                                    <div class="text-xs font-medium truncate" x-text="jobLabel(s.job_id)"></div>
-                                    <div class="text-[10px] text-slate-400 flex justify-between">
-                                      <span x-text="`#${s.order + 1} • ${s.duration_minutes}m`"></span>
-                                      <span x-text="`+${s.travel_minutes_before}m drive`"></span>
-                                    </div>
-                                  </div>
-                                </button>
-                              </template>
-                            </div>
-                          </template>
-                        </td>
-                      </template>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- Bottom: pending / conflicts -->
-    <section class="grid grid-cols-12 gap-6 mb-6">
-      <div class="col-span-12 lg:col-span-6 bg-ink-900 border border-ink-700 rounded-xl p-5">
-        <h3 class="font-semibold mb-1">Pending & unscheduled</h3>
-        <p class="text-xs text-slate-400 mb-3">Jobs awaiting placement or deferred this week</p>
-        <div class="space-y-2 max-h-72 overflow-auto scroll-thin">
-          <template x-for="j in pendingJobs()" :key="j.id">
-            <button @click="selectJob(j.id)" class="w-full text-left bg-ink-800/70 hover:bg-ink-800 border border-ink-700 rounded-md p-2 transition">
-              <div class="flex items-center justify-between">
-                <div>
-                  <div class="text-sm font-medium" x-text="clientName(j.client_id)"></div>
-                  <div class="text-[11px] text-slate-400 truncate" x-text="`${j.service_type.replaceAll('_',' ')} • ${j.address}`"></div>
-                </div>
-                <div class="text-right">
-                  <div class="text-[10px] mono text-slate-400" x-text="`${j.estimated_minutes}m • diff ${j.difficulty}`"></div>
-                  <div class="text-[10px] uppercase tracking-wider" :class="statusColor(j.status)" x-text="j.status"></div>
-                </div>
-              </div>
-            </button>
-          </template>
-          <template x-if="pendingJobs().length === 0">
-            <div class="text-xs text-slate-500 italic">No pending jobs.</div>
-          </template>
-        </div>
-      </div>
-
-      <div class="col-span-12 lg:col-span-6 bg-ink-900 border border-ink-700 rounded-xl p-5">
-        <h3 class="font-semibold mb-1">Conflicts & warnings</h3>
-        <p class="text-xs text-slate-400 mb-3">Surfaced by the equipment + time-budget agents</p>
-        <div class="space-y-2 max-h-72 overflow-auto scroll-thin">
-          <template x-for="c in (plan?.plan?.conflicts || [])" :key="c">
-            <div class="text-xs flex gap-2 items-start bg-amber-900/20 border border-amber-700/40 rounded-md p-2">
-              <span class="text-amber-400 mt-0.5">!</span>
-              <span class="text-amber-100/90" x-text="c"></span>
-            </div>
-          </template>
-          <template x-if="!plan || (plan.plan.conflicts || []).length === 0">
-            <div class="text-xs text-slate-500 italic">No conflicts.</div>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <footer class="text-xs text-slate-500 text-center pb-6 max-w-3xl mx-auto">
-      Anthropic patterns at work: <span class="text-slate-400">Orchestrator-workers</span>
-      (Supervisor) · <span class="text-slate-400">Parallelization-sectioning</span>
-      (Equipment&nbsp;‖&nbsp;TimeBudget, Critic&nbsp;‖&nbsp;Guardrail) ·
-      <span class="text-slate-400">Routing</span> (Client&nbsp;Comms by service/channel) ·
-      <span class="text-slate-400">Evaluator-optimizer</span> (Critic loop, Plan&nbsp;Reviewer) ·
-      <span class="text-slate-400">Transparent decision-making</span> (Rescheduler enumerates candidates).
-    </footer>
-
-    <!-- Job detail modal -->
-    <div x-show="selectedJob" x-transition.opacity class="fixed inset-0 bg-black/60 z-40 flex items-center justify-center p-4" @click.self="selectedJob = null" style="display:none;">
-      <div class="bg-ink-900 border border-ink-700 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-auto scroll-thin">
-        <template x-if="selectedJob">
-          <div>
-            <div class="p-5 border-b border-ink-700 flex items-start justify-between">
-              <div>
-                <div class="text-[10px] uppercase tracking-wider text-slate-400" x-text="selectedJob.service_type.replaceAll('_',' ')"></div>
-                <div class="text-lg font-semibold" x-text="clientName(selectedJob.client_id)"></div>
-                <div class="text-xs text-slate-400" x-text="selectedJob.address"></div>
-              </div>
-              <button @click="selectedJob = null" class="text-slate-500 hover:text-slate-200">✕</button>
-            </div>
-            <div class="p-5 grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div class="text-xs text-slate-500">Duration</div>
-                <div x-text="`${selectedJob.estimated_minutes} min`"></div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">Difficulty</div>
-                <div x-text="`${selectedJob.difficulty} / 5`"></div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">Required skills</div>
-                <div x-text="(selectedJob.required_skills || []).join(', ') || '—'"></div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">Required equipment</div>
-                <div x-text="(selectedJob.required_equipment || []).join(', ') || '—'"></div>
-              </div>
-              <div class="col-span-2">
-                <div class="text-xs text-slate-500">Notes</div>
-                <div class="text-sm" x-text="selectedJob.notes || '—'"></div>
-              </div>
-              <div class="col-span-2">
-                <div class="text-xs text-slate-500 mb-1">Draft client message</div>
-                <div class="bg-ink-800 border border-ink-700 rounded-md p-3 text-sm whitespace-pre-wrap" x-text="messageFor(selectedJob.id) || '— No message drafted (job not yet scheduled).'"></div>
-              </div>
-            </div>
-            <div class="p-5 border-t border-ink-700 flex flex-wrap items-center gap-2 justify-end">
-              <button @click="confirmJob(selectedJob.id)" class="text-xs px-3 py-1.5 rounded-md bg-accent-500/20 border border-accent-500/40 text-accent-500 hover:bg-accent-500/30">Mark client-confirmed</button>
-              <button @click="openReschedule = true" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500">Reschedule…</button>
-              <button @click="cancelJob(selectedJob.id)" class="text-xs px-3 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/40 text-rose-300 hover:bg-rose-500/20">Cancel job</button>
+            <div class="flex flex-wrap justify-center gap-2 text-sm">
+              <button @click="sendPrompt('Plan this week')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Plan this week</button>
+              <button @click="sendPrompt('Show draft schedule')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Show draft schedule</button>
             </div>
           </div>
         </template>
-      </div>
-    </div>
 
-    <!-- Reschedule modal -->
-    <div x-show="openReschedule" x-transition.opacity class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="openReschedule = false" style="display:none;">
-      <div class="bg-ink-900 border border-ink-700 rounded-xl w-full max-w-lg">
-        <div class="p-5 border-b border-ink-700">
-          <h3 class="font-semibold">Reschedule job</h3>
-          <p class="text-xs text-slate-400">The rescheduler agent will pick a new slot that respects skills, equipment, and capacity, then draft a client note.</p>
-        </div>
-        <div class="p-5 space-y-3">
-          <label class="block">
-            <span class="text-xs text-slate-400">Reason</span>
-            <select x-model="rescheduleReason" class="w-full mt-1 bg-ink-800 border border-ink-700 rounded-md px-3 py-2 text-sm">
-              <option>Forecast: rain all day</option>
-              <option>High wind advisory — no high-rise work</option>
-              <option>Equipment failure (scissor lift)</option>
-              <option>Client unavailable</option>
-              <option>Crew member callout</option>
-              <option>Overrun on previous job</option>
-            </select>
-          </label>
-          <label class="block">
-            <span class="text-xs text-slate-400">Notes (optional)</span>
-            <textarea x-model="rescheduleNotes" rows="3" class="w-full mt-1 bg-ink-800 border border-ink-700 rounded-md px-3 py-2 text-sm"></textarea>
-          </label>
-        </div>
-        <div class="p-5 border-t border-ink-700 flex items-center gap-2 justify-end">
-          <button @click="openReschedule = false" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700">Cancel</button>
-          <button @click="reschedule()" class="text-xs px-3 py-1.5 rounded-md bg-brand-500 hover:bg-brand-600">Run rescheduler</button>
-        </div>
-      </div>
-    </div>
+        <!-- Messages -->
+        <template x-for="(msg, idx) in messages" :key="msg.id">
+          <div class="flex gap-3" :class="msg.role === 'user' ? 'justify-end' : ''">
+            <!-- Avatar -->
+            <template x-if="msg.role !== 'user'">
+              <div class="w-8 h-8 rounded-sm bg-accent-500 shrink-0 flex items-center justify-center text-surface-950 text-xs font-bold mt-0.5">PA</div>
+            </template>
 
-    <!-- Messages drawer -->
-    <div x-show="openMessages" x-transition.opacity class="fixed inset-0 bg-black/60 z-40 flex items-stretch justify-end" @click.self="openMessages = false" style="display:none;">
-      <div class="bg-ink-900 border-l border-ink-700 w-full max-w-xl h-full overflow-auto scroll-thin">
-        <div class="p-5 border-b border-ink-700 sticky top-0 bg-ink-900 z-10 flex items-center justify-between">
-          <div>
-            <h3 class="font-semibold">Drafted client messages</h3>
-            <p class="text-xs text-slate-400">Drafted by the ClientCommsAgent for each scheduled job</p>
-          </div>
-          <button @click="openMessages = false" class="text-slate-500 hover:text-slate-200">✕</button>
-        </div>
-        <div class="p-5 space-y-4">
-          <template x-for="[jobId, msg] in messageEntries()" :key="jobId">
-            <div class="bg-ink-800/60 border rounded-md p-3"
-                 :class="(plan?.message_quality?.[jobId]?.guardrail_passed === false) ? 'border-rose-500/50' : 'border-ink-700'">
-              <div class="flex items-center justify-between mb-2 gap-2">
-                <div class="text-xs text-slate-400 truncate" x-text="`${clientName(jobIdToJob(jobId)?.client_id)} · ${jobId}`"></div>
-                <div class="flex items-center gap-2 shrink-0">
-                  <template x-if="plan?.message_quality?.[jobId]">
-                    <span class="text-[10px] mono px-1.5 py-0.5 rounded"
-                          :class="qualityBadgeClass(plan.message_quality[jobId].score)"
-                          x-text="`Q ${plan.message_quality[jobId].score}/100`"></span>
+            <div class="max-w-[92%] min-w-0" :class="msg.role === 'user' ? 'bg-surface-800 rounded-2xl rounded-tr-sm px-4 py-2.5' : ''">
+              <!-- User bubble -->
+              <template x-if="msg.role === 'user'">
+                <p class="text-sm" x-text="msg.text"></p>
+              </template>
+
+              <!-- Assistant -->
+              <template x-if="msg.role === 'assistant'">
+                <div class="space-y-3">
+                  <p class="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap" x-text="msg.text"></p>
+
+                  <!-- Live traces (collapsible) -->
+                  <template x-if="msg.traces && msg.traces.length">
+                    <details class="group bg-surface-900 border border-surface-800 rounded-lg text-xs" :open="msg.streaming">
+                      <summary class="px-3 py-2 cursor-pointer text-neutral-400 hover:text-neutral-200 select-none flex items-center gap-2">
+                        <span class="mono text-[10px] uppercase tracking-wider text-neutral-500">Agent trace</span>
+                        <span x-text="`${msg.traces.length} step${msg.traces.length === 1 ? '' : 's'}`"></span>
+                        <span x-show="msg.streaming" class="text-accent-500">running…</span>
+                      </summary>
+                      <div class="border-t border-surface-800 max-h-48 overflow-y-auto scroll-thin px-3 py-2 space-y-1.5">
+                        <template x-for="(t, ti) in msg.traces" :key="ti">
+                          <div class="flex gap-2 items-start fade-in">
+                            <span class="mono shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                  :class="agentPillClass(t.agent)" x-text="agentShort(t.agent)"></span>
+                            <span class="text-neutral-500 shrink-0" x-text="t.phase"></span>
+                            <span class="text-neutral-300" x-text="t.message"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </details>
                   </template>
-                  <template x-if="plan?.message_quality?.[jobId]?.guardrail_passed === false">
-                    <span class="text-[10px] uppercase tracking-wider text-rose-300">Guardrail</span>
+
+                  <!-- Schedule preview in chat -->
+                  <template x-if="msg.scheduleHtml">
+                    <div class="bg-surface-900 border border-surface-800 rounded-lg p-3 text-sm" x-html="msg.scheduleHtml"></div>
                   </template>
-                  <button @click="copy(msg)" class="text-[10px] text-slate-400 hover:text-slate-200">Copy</button>
-                </div>
-              </div>
-              <template x-if="plan?.message_quality?.[jobId]?.guardrail_passed === false">
-                <div class="text-[11px] text-rose-300/90 mb-2">
-                  <div class="font-medium uppercase tracking-wider text-rose-300">Flags</div>
-                  <ul class="list-disc list-inside">
-                    <template x-for="f in plan.message_quality[jobId].guardrail_flags" :key="f">
-                      <li x-text="f"></li>
-                    </template>
-                  </ul>
+
+                  <!-- Actions -->
+                  <template x-if="msg.actions && msg.actions.length">
+                    <div class="flex flex-wrap gap-2 pt-1">
+                      <template x-for="act in msg.actions" :key="act.id">
+                        <button @click="runAction(act)" :disabled="running"
+                                class="text-xs px-3 py-1.5 rounded-md border transition disabled:opacity-50"
+                                :class="act.primary ? 'bg-accent-500 border-accent-500 text-surface-950 font-medium hover:opacity-90' : 'border-surface-700 hover:bg-surface-800'"
+                                x-text="act.label"></button>
+                      </template>
+                    </div>
+                  </template>
                 </div>
               </template>
-              <div class="text-sm whitespace-pre-wrap" x-text="msg"></div>
             </div>
-          </template>
-          <template x-if="messageEntries().length === 0">
-            <div class="text-sm text-slate-500 italic">No messages drafted yet.</div>
-          </template>
+          </div>
+        </template>
+
+        <!-- Typing indicator -->
+        <div x-show="running && !currentTraceMsg()" class="flex gap-3">
+          <div class="w-8 h-8 rounded-sm bg-accent-500 shrink-0 flex items-center justify-center text-surface-950 text-xs font-bold">PA</div>
+          <div class="text-sm text-neutral-500"><span class="cursor-blink">▋</span> Agents working…</div>
         </div>
+      </div>
+
+      <!-- Composer -->
+      <div class="shrink-0 border-t border-surface-800 p-4">
+        <form @submit.prevent="sendFromInput()" class="relative bg-surface-900 border border-surface-700 rounded-2xl focus-within:border-neutral-500">
+          <textarea x-model="input" rows="1" placeholder="Message ProductionAgent…"
+                    @keydown.enter.prevent="if (!$event.shiftKey) sendFromInput()"
+                    class="w-full bg-transparent text-sm px-4 py-3 pr-12 resize-none outline-none placeholder:text-neutral-500 max-h-32"></textarea>
+          <button type="submit" :disabled="running || !input.trim()"
+                  class="absolute right-2 bottom-2 p-2 rounded-lg bg-accent-500 text-surface-950 disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M3 11l18-7-7 18-2-8-9-3z"/></svg>
+          </button>
+        </form>
+        <p class="text-[10px] text-neutral-500 mt-2 text-center">Try: Plan this week · Confirm schedule to live tab · Reschedule job_003 rain</p>
       </div>
     </div>
 
+    <!-- ========== SCHEDULE TAB (confirmed only) ========== -->
+    <div x-show="tab === 'schedule'" class="flex-1 min-h-0 overflow-auto scroll-thin p-4" x-cloak>
+      <template x-if="!confirmedPlan">
+        <div class="text-center py-16 text-neutral-500">
+          <p class="text-sm mb-2">No live schedule yet.</p>
+          <p class="text-xs">Plan in <button @click="tab='chat'" class="text-accent-500 underline">Chat</button>, then click <strong>Publish to live schedule</strong>.</p>
+        </div>
+      </template>
+      <template x-if="confirmedPlan">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold">Live schedule</h2>
+          <p class="text-xs text-neutral-400" x-text="confirmedPlan.plan.summary || 'Published plan'"></p>
+          <p class="text-[10px] text-neutral-500 mt-1">Week of <span x-text="confirmedPlan.plan.week_start"></span> · Updates here when you confirm in chat</p>
+        </div>
+        <div class="overflow-x-auto" x-html="buildScheduleTable(confirmedPlan)"></div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Settings: API keys -->
+  <div x-show="showSettings" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" @click.self="showSettings=false">
+    <div class="bg-surface-900 border border-surface-800 rounded-xl w-full max-w-md max-h-[85vh] overflow-auto">
+      <div class="p-5 border-b border-surface-800 flex justify-between items-start">
+        <div>
+          <h3 class="font-semibold">API keys & configuration</h3>
+          <p class="text-xs text-neutral-400 mt-1">Keys are read from a <code class="mono text-neutral-300">.env</code> file on the server — not in this browser.</p>
+        </div>
+        <button @click="showSettings=false" class="text-neutral-500 hover:text-white">✕</button>
+      </div>
+      <div class="p-5 space-y-4 text-sm">
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-2 h-2 rounded-full" :class="config.llm_enabled ? 'bg-accent-500' : 'bg-neutral-600'"></span>
+          <span x-text="config.llm_enabled ? `LLM active (${config.llm_model})` : 'LLM off — using rule-based messages'"></span>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-2 h-2 rounded-full" :class="config.supabase_enabled ? 'bg-accent-500' : 'bg-neutral-600'"></span>
+          <span x-text="config.supabase_enabled ? 'Supabase persisting plans' : 'Supabase off — in-memory only'"></span>
+        </div>
+
+        <div class="bg-surface-950 border border-surface-800 rounded-lg p-3">
+          <p class="text-xs font-medium text-neutral-300 mb-2">How to connect AI (OpenAI)</p>
+          <ol class="text-xs text-neutral-400 space-y-2 list-decimal list-inside">
+            <li>In your project folder, copy <code class="mono">.env.example</code> to <code class="mono">.env</code></li>
+            <li>Set <code class="mono">OPENAI_API_KEY=sk-…</code></li>
+            <li>Optional: <code class="mono">OPENAI_MODEL=gpt-4o-mini</code></li>
+            <li>Restart the server: <code class="mono">python3 -m uvicorn app.main:app --reload</code></li>
+          </ol>
+        </div>
+
+        <div class="bg-surface-950 border border-surface-800 rounded-lg p-3">
+          <p class="text-xs font-medium text-neutral-300 mb-2">Optional: Supabase database</p>
+          <ol class="text-xs text-neutral-400 space-y-2 list-decimal list-inside">
+            <li>Add <code class="mono">SUPABASE_URL</code> and <code class="mono">SUPABASE_SERVICE_ROLE_KEY</code> to <code class="mono">.env</code></li>
+            <li>Use the <strong>service role</strong> key from Supabase Dashboard → Settings → API</li>
+            <li>Never paste service keys into this UI or commit <code class="mono">.env</code> to git</li>
+          </ol>
+        </div>
+
+        <p class="text-[10px] text-neutral-500">Path on your machine: project root / <span class="mono">.env</span></p>
+      </div>
+    </div>
   </div>
 
   <script>
     function app() {
       return {
+        tab: 'chat',
+        messages: [],
+        input: '',
+        running: false,
+        draftPlan: null,
+        confirmedPlan: null,
         crews: [],
         jobs: [],
         clients: [],
-        plan: null,
-        events: [],
-        agentCounts: {},
-        running: false,
-        health: { llm_enabled: false },
-        selectedJob: null,
-        openReschedule: false,
-        openMessages: false,
-        rescheduleReason: 'Forecast: rain all day',
-        rescheduleNotes: '',
-        selectedDay: null,
-        selectedCrew: null,
-        agentList: [
-          { name: 'SupervisorAgent', label: 'Supervisor' },
-          { name: 'GeoClusterAgent', label: 'Geo Cluster' },
-          { name: 'CrewMatchAgent', label: 'Crew Match' },
-          { name: 'EquipmentAgent', label: 'Equipment' },
-          { name: 'TimeBudgetAgent', label: 'Time Budget' },
-          { name: 'ClientCommsAgent', label: 'Client Comms' },
-          { name: 'PlanReviewerAgent', label: 'Plan Reviewer' },
-          { name: 'ReschedulerAgent', label: 'Rescheduler' },
-        ],
+        config: { llm_enabled: false, supabase_enabled: false },
+        showSettings: false,
+        _msgId: 0,
 
         async init() {
-          await this.refreshAll();
-          this.health = await (await fetch('/api/health')).json();
-        },
-
-        async refreshAll() {
-          const [j, c, cl, p] = await Promise.all([
+          const [j, c, cl, draft, confirmed, cfg] = await Promise.all([
             fetch('/api/jobs').then(r => r.json()),
             fetch('/api/crews').then(r => r.json()),
             fetch('/api/clients').then(r => r.json()),
             fetch('/api/plan').then(r => r.json()),
+            fetch('/api/plan/confirmed').then(r => r.json()),
+            fetch('/api/config').then(r => r.json()),
           ]);
-          this.jobs = j; this.crews = c; this.clients = cl; this.plan = p;
+          this.jobs = j;
+          this.crews = c;
+          this.clients = cl;
+          this.draftPlan = draft;
+          this.confirmedPlan = confirmed;
+          this.config = cfg;
+          if (draft) {
+            this.pushAssistant('Loaded the latest draft plan from the server.', { scheduleHtml: this.buildScheduleTable(draft), actions: this.draftActions() });
+          }
         },
 
-        async resetDemo() {
-          await fetch('/api/seed/reset', { method: 'POST' });
-          this.events = [];
-          this.agentCounts = {};
-          this.plan = null;
-          await this.refreshAll();
+        nextId() { return 'm' + (++this._msgId); },
+
+        pushUser(text) {
+          this.messages.push({ id: this.nextId(), role: 'user', text });
+          this.scrollChat();
         },
 
-        get weekDays() {
-          if (!this.plan) return [];
-          const start = new Date(this.plan.plan.week_start);
-          return Array.from({ length: 5 }, (_, i) => {
-            const d = new Date(start);
-            d.setDate(start.getDate() + i);
-            return d.toISOString().slice(0, 10);
+        pushAssistant(text, opts = {}) {
+          const m = {
+            id: this.nextId(),
+            role: 'assistant',
+            text,
+            traces: opts.traces || [],
+            streaming: !!opts.streaming,
+            scheduleHtml: opts.scheduleHtml || null,
+            actions: opts.actions || [],
+          };
+          this.messages.push(m);
+          this.scrollChat();
+          return m;
+        },
+
+        currentTraceMsg() {
+          return this.messages.find(m => m.role === 'assistant' && m.streaming);
+        },
+
+        scrollChat() {
+          this.$nextTick(() => {
+            const el = this.$refs.chatScroll;
+            if (el) el.scrollTop = el.scrollHeight;
           });
         },
 
-        formatDay(iso) {
-          const d = new Date(iso + 'T00:00:00');
-          return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        sendFromInput() {
+          const t = this.input.trim();
+          if (!t || this.running) return;
+          this.input = '';
+          this.sendPrompt(t);
         },
 
-        dayFor(crewId, day) {
-          if (!this.plan) return [];
-          return this.plan.plan.days.filter(cd => cd.crew_id === crewId && cd.day === day);
+        async sendPrompt(text) {
+          const lower = text.toLowerCase();
+          this.pushUser(text);
+
+          if (/^plan|schedule.*week|run agents/i.test(lower)) {
+            await this.runPlanWeek();
+            return;
+          }
+          if (/confirm|publish.*live|approve.*schedule/i.test(lower)) {
+            await this.publishPlan();
+            return;
+          }
+          if (/show.*(draft|schedule)/i.test(lower)) {
+            if (!this.draftPlan) {
+              this.pushAssistant('No draft yet. Say "Plan this week" first.');
+              return;
+            }
+            this.pushAssistant('Here is the current draft:', {
+              scheduleHtml: this.buildScheduleTable(this.draftPlan),
+              actions: this.draftActions(),
+            });
+            return;
+          }
+          const resched = lower.match(/reschedule\s+(job_\w+).*?(?:due to|because|for|:)\s*(.+)/i)
+            || lower.match(/reschedule\s+(job_\w+)\s+(.+)/i);
+          if (resched) {
+            await this.runReschedule(resched[1], resched[2].trim());
+            return;
+          }
+
+          this.pushAssistant(
+            'I can help you:\n• **Plan this week** — runs all agents with live traces\n• **Confirm schedule** / **Publish to live schedule** — copies the draft to the Live schedule tab\n• **Reschedule job_003 due to rain** — replans one job\n• **Show draft schedule**',
+            { actions: [{ id: 'plan', label: 'Plan this week', primary: true }, { id: 'show', label: 'Show draft' }] }
+          );
         },
 
-        jobLabel(jobId) {
-          const j = this.jobs.find(x => x.id === jobId);
-          if (!j) return jobId;
-          return this.clientName(j.client_id);
+        draftActions() {
+          if (!this.draftPlan) return [];
+          return [
+            { id: 'publish', label: 'Publish to live schedule', primary: true },
+            { id: 'show', label: 'Refresh preview' },
+          ];
         },
 
-        jobIdToJob(jobId) {
-          return this.jobs.find(x => x.id === jobId);
+        async runAction(act) {
+          if (act.id === 'plan') await this.runPlanWeek();
+          else if (act.id === 'publish') await this.publishPlan();
+          else if (act.id === 'show' && this.draftPlan) {
+            this.pushAssistant('Draft schedule:', { scheduleHtml: this.buildScheduleTable(this.draftPlan), actions: this.draftActions() });
+          }
         },
 
-        jobBgClass(jobId) {
-          const j = this.jobs.find(x => x.id === jobId);
-          if (!j) return 'bg-ink-900';
-          if (j.status === 'confirmed') return 'bg-accent-500/15 border border-accent-500/40';
-          if (j.status === 'rescheduled') return 'bg-amber-500/15 border border-amber-500/40';
-          if (j.status === 'cancelled') return 'bg-rose-500/15 border border-rose-500/40 opacity-60';
-          return 'bg-ink-700/60';
-        },
-
-        statusColor(s) {
-          return ({
-            pending: 'text-slate-400',
-            scheduled: 'text-brand-400',
-            confirmed: 'text-accent-500',
-            rescheduled: 'text-amber-400',
-            cancelled: 'text-rose-400',
-            complete: 'text-slate-300',
-          })[s] || 'text-slate-400';
-        },
-
-        clientName(clientId) {
-          const c = this.clients.find(x => x.id === clientId);
-          return c ? c.name : clientId;
-        },
-
-        pendingJobs() {
-          return this.jobs.filter(j => j.status === 'pending' || (this.plan?.plan?.unscheduled_job_ids || []).includes(j.id));
-        },
-
-        messageFor(jobId) {
-          return this.plan?.client_messages?.[jobId];
-        },
-
-        messageEntries() {
-          if (!this.plan?.client_messages) return [];
-          return Object.entries(this.plan.client_messages);
-        },
-
-        selectJob(jobId, day = null, crewId = null) {
-          const j = this.jobs.find(x => x.id === jobId);
-          if (!j) return;
-          this.selectedJob = j;
-          this.selectedDay = day;
-          this.selectedCrew = crewId;
-        },
-
-        agentColor(name, withBorder) {
-          const map = {
-            SupervisorAgent: ['text-fuchsia-300', 'bg-fuchsia-500', 'border-fuchsia-500/40 bg-fuchsia-500/10'],
-            GeoClusterAgent: ['text-sky-300', 'bg-sky-500', 'border-sky-500/40 bg-sky-500/10'],
-            CrewMatchAgent: ['text-emerald-300', 'bg-emerald-500', 'border-emerald-500/40 bg-emerald-500/10'],
-            EquipmentAgent: ['text-amber-300', 'bg-amber-500', 'border-amber-500/40 bg-amber-500/10'],
-            TimeBudgetAgent: ['text-indigo-300', 'bg-indigo-500', 'border-indigo-500/40 bg-indigo-500/10'],
-            ClientCommsAgent: ['text-rose-300', 'bg-rose-500', 'border-rose-500/40 bg-rose-500/10'],
-            PlanReviewerAgent: ['text-cyan-300', 'bg-cyan-500', 'border-cyan-500/40 bg-cyan-500/10'],
-            ReschedulerAgent: ['text-orange-300', 'bg-orange-500', 'border-orange-500/40 bg-orange-500/10'],
-          };
-          const t = map[name] || ['text-slate-300', 'bg-slate-500', 'border-slate-500/40 bg-slate-500/10'];
-          return withBorder ? t[2] + ' ' + t[0] : t[1];
-        },
-
-        agentShort(name) {
-          return ({
-            SupervisorAgent: 'super',
-            GeoClusterAgent: 'geo',
-            CrewMatchAgent: 'crew',
-            EquipmentAgent: 'equip',
-            TimeBudgetAgent: 'budget',
-            ClientCommsAgent: 'comms',
-            PlanReviewerAgent: 'review',
-            ReschedulerAgent: 'resched',
-          })[name] || name;
-        },
-
-        riskBadgeClass(score) {
-          if (score >= 60) return 'bg-rose-500/20 border border-rose-500/40 text-rose-300';
-          if (score >= 30) return 'bg-amber-500/20 border border-amber-500/40 text-amber-300';
-          return 'bg-accent-500/15 border border-accent-500/40 text-accent-500';
-        },
-
-        qualityBadgeClass(score) {
-          if (score >= 80) return 'bg-accent-500/15 text-accent-500';
-          if (score >= 60) return 'bg-amber-500/15 text-amber-300';
-          return 'bg-rose-500/15 text-rose-300';
-        },
-
-        async planWeek() {
+        async runPlanWeek() {
           if (this.running) return;
           this.running = true;
-          this.events = [];
-          this.agentCounts = {};
+          const msg = this.pushAssistant('Planning your week…', { traces: [], streaming: true });
+
           try {
             const resp = await fetch('/api/plan/stream', {
               method: 'POST',
@@ -606,57 +371,159 @@
                 if (!part.startsWith('data:')) continue;
                 const payload = JSON.parse(part.slice(5).trim());
                 if (payload.type === 'event') {
-                  this.events.push(payload.data);
-                  this.agentCounts[payload.data.agent] = (this.agentCounts[payload.data.agent] || 0) + 1;
-                  this.$nextTick(() => {
-                    const box = this.$refs.eventsBox;
-                    if (box) box.scrollTop = box.scrollHeight;
-                  });
+                  msg.traces.push(payload.data);
+                  this.scrollChat();
                 } else if (payload.type === 'result') {
-                  this.plan = payload.data;
-                  await this.refreshAll();
+                  this.draftPlan = payload.data;
+                  await this.refreshJobs();
+                } else if (payload.type === 'error') {
+                  msg.text = 'Error: ' + payload.data.message;
                 }
               }
             }
+
+            msg.streaming = false;
+            const review = this.draftPlan?.review;
+            let summary = this.draftPlan?.plan?.summary || 'Plan complete.';
+            if (review?.top_concern) summary += '\n\n⚠ ' + review.top_concern;
+            msg.text = summary;
+            msg.scheduleHtml = this.buildScheduleTable(this.draftPlan);
+            msg.actions = this.draftActions();
+          } catch (e) {
+            msg.streaming = false;
+            msg.text = 'Failed to plan: ' + e.message;
           } finally {
             this.running = false;
+            this.scrollChat();
           }
         },
 
-        async confirmJob(jobId) {
-          await fetch(`/api/jobs/${jobId}/confirm`, { method: 'POST' });
-          await this.refreshAll();
-          this.selectedJob = this.jobs.find(j => j.id === jobId);
+        async publishPlan() {
+          if (!this.draftPlan) {
+            this.pushAssistant('Nothing to publish yet. Run "Plan this week" first.');
+            return;
+          }
+          try {
+            const r = await fetch('/api/plan/confirm', { method: 'POST' });
+            if (!r.ok) throw new Error(await r.text());
+            this.confirmedPlan = await r.json();
+            this.tab = 'schedule';
+            this.pushAssistant('Published to **Live schedule**. Open the Live schedule tab to see the confirmed week. Client confirmations can still be done per job from the draft.');
+          } catch (e) {
+            this.pushAssistant('Could not publish: ' + e.message);
+          }
         },
 
-        async cancelJob(jobId) {
-          await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
-          this.selectedJob = null;
-          await this.refreshAll();
+        async runReschedule(jobId, reason) {
+          if (!this.draftPlan) {
+            this.pushAssistant('Plan the week first, then reschedule.');
+            return;
+          }
+          this.running = true;
+          const msg = this.pushAssistant(`Rescheduling ${jobId}…`, { traces: [], streaming: true });
+          try {
+            const r = await fetch('/api/reschedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ job_id: jobId, reason }),
+            });
+            const result = await r.json();
+            for (const e of (result.events || [])) msg.traces.push(e);
+            msg.streaming = false;
+            if (result.succeeded) {
+              msg.text = `Moved ${jobId} to ${result.new_day} (${result.new_crew_id}).\n\nClient note:\n${result.client_message}`;
+              this.draftPlan = await fetch('/api/plan').then(x => x.json());
+              msg.scheduleHtml = this.buildScheduleTable(this.draftPlan);
+              msg.actions = this.draftActions();
+            } else {
+              msg.text = result.client_message || 'Could not reschedule.';
+            }
+          } catch (e) {
+            msg.streaming = false;
+            msg.text = 'Reschedule failed: ' + e.message;
+          } finally {
+            this.running = false;
+            this.scrollChat();
+          }
         },
 
-        async reschedule() {
-          if (!this.selectedJob) return;
-          this.openReschedule = false;
-          const reason = (this.rescheduleNotes ? this.rescheduleReason + ' — ' + this.rescheduleNotes : this.rescheduleReason);
-          const resp = await fetch('/api/reschedule', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ job_id: this.selectedJob.id, reason }),
+        async refreshJobs() {
+          this.jobs = await fetch('/api/jobs').then(r => r.json());
+        },
+
+        clientName(cid) {
+          const c = this.clients.find(x => x.id === cid);
+          return c ? c.name : cid;
+        },
+
+        crewName(id) {
+          const c = this.crews.find(x => x.id === id);
+          return c ? c.name : id;
+        },
+
+        buildScheduleTable(plan) {
+          if (!plan?.plan?.days?.length) return '<p class="text-neutral-500 text-xs">No crew-days scheduled.</p>';
+          const start = new Date(plan.plan.week_start + 'T00:00:00');
+          const days = Array.from({ length: 5 }, (_, i) => {
+            const d = new Date(start);
+            d.setDate(start.getDate() + i);
+            return d.toISOString().slice(0, 10);
           });
-          const result = await resp.json();
-          // append events to live log
-          for (const e of (result.events || [])) {
-            this.events.push(e);
-            this.agentCounts[e.agent] = (this.agentCounts[e.agent] || 0) + 1;
+          const fmt = iso => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+          let html = '<table class="w-full text-xs border-collapse"><thead><tr class="text-neutral-500">';
+          html += '<th class="text-left py-2 pr-2">Crew</th>';
+          days.forEach(d => { html += `<th class="text-left py-2 px-1">${fmt(d)}</th>`; });
+          html += '</tr></thead><tbody>';
+
+          for (const crew of this.crews) {
+            html += `<tr class="border-t border-surface-800 align-top"><td class="py-2 pr-2 font-medium">${crew.name}</td>`;
+            for (const day of days) {
+              const cds = plan.plan.days.filter(cd => cd.crew_id === crew.id && cd.day === day);
+              html += '<td class="py-2 px-1">';
+              if (!cds.length) html += '<span class="text-neutral-600">—</span>';
+              else cds.forEach(cd => {
+                const util = Math.round((cd.utilization || 0) * 100);
+                html += `<div class="mb-1 p-1.5 rounded bg-surface-800 border border-surface-700">`;
+                html += `<div class="text-[10px] text-neutral-500">${util}% · ${cd.total_work_minutes}m work</div>`;
+                cd.stops.forEach(s => {
+                  const j = this.jobs.find(x => x.id === s.job_id);
+                  const name = j ? this.clientName(j.client_id) : s.job_id;
+                  html += `<div class="mt-0.5 text-neutral-200">${name}</div>`;
+                });
+                html += '</div>';
+              });
+              html += '</td>';
+            }
+            html += '</tr>';
           }
-          await this.refreshAll();
-          this.rescheduleNotes = '';
-          this.selectedJob = this.jobs.find(j => j.id === this.selectedJob.id);
+          html += '</tbody></table>';
+          if (plan.plan.conflicts?.length) {
+            html += '<div class="mt-3 text-amber-400/90 text-[11px]"><strong>Warnings:</strong><ul class="list-disc ml-4">';
+            plan.plan.conflicts.slice(0, 5).forEach(c => { html += `<li>${c}</li>`; });
+            html += '</ul></div>';
+          }
+          return html;
         },
 
-        copy(text) {
-          navigator.clipboard?.writeText(text);
+        agentShort(name) {
+          return ({ SupervisorAgent:'super', GeoClusterAgent:'geo', CrewMatchAgent:'crew',
+            EquipmentAgent:'equip', TimeBudgetAgent:'budget', ClientCommsAgent:'comms',
+            PlanReviewerAgent:'review', ReschedulerAgent:'resched' })[name] || name;
+        },
+
+        agentPillClass(name) {
+          const m = {
+            SupervisorAgent:'bg-fuchsia-500/20 text-fuchsia-300',
+            GeoClusterAgent:'bg-sky-500/20 text-sky-300',
+            CrewMatchAgent:'bg-emerald-500/20 text-emerald-300',
+            EquipmentAgent:'bg-amber-500/20 text-amber-300',
+            TimeBudgetAgent:'bg-indigo-500/20 text-indigo-300',
+            ClientCommsAgent:'bg-rose-500/20 text-rose-300',
+            PlanReviewerAgent:'bg-cyan-500/20 text-cyan-300',
+            ReschedulerAgent:'bg-orange-500/20 text-orange-300',
+          };
+          return m[name] || 'bg-neutral-700 text-neutral-300';
         },
       };
     }

@@ -104,6 +104,40 @@ async def get_plan() -> Optional[PlanResult]:
     return store.get_plan()
 
 
+@app.get("/api/plan/confirmed", response_model=Optional[PlanResult])
+async def get_confirmed_plan() -> Optional[PlanResult]:
+    return store.get_confirmed_plan()
+
+
+@app.post("/api/plan/confirm", response_model=PlanResult)
+async def confirm_plan() -> PlanResult:
+    """Publish the latest draft plan to the live schedule tab."""
+    plan = store.get_plan()
+    if not plan:
+        raise HTTPException(status_code=400, detail="No draft plan yet. Plan the week in chat first.")
+    published = plan.model_copy(deep=True)
+    store.set_confirmed_plan(published)
+    return published
+
+
+@app.get("/api/config")
+async def get_config() -> dict:
+    """Safe runtime config for the UI (no secrets)."""
+    return {
+        "llm_enabled": llm.enabled,
+        "llm_model": llm.model if llm.enabled else None,
+        "supabase_enabled": supabase.enabled,
+        "env_file": ".env",
+        "env_vars": {
+            "OPENAI_API_KEY": "Enables LLM summaries and client messages",
+            "OPENAI_BASE_URL": "Optional OpenAI-compatible API base URL",
+            "OPENAI_MODEL": "Model id (default gpt-4o-mini)",
+            "SUPABASE_URL": "Optional persistence",
+            "SUPABASE_SERVICE_ROLE_KEY": "Server-only; never put in the browser",
+        },
+    }
+
+
 # ---------- mutation / planning endpoints ----------
 
 

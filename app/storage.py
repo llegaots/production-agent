@@ -24,6 +24,7 @@ class Store:
         self.equipment: dict[str, Equipment] = {}
         self.jobs: dict[str, Job] = {}
         self.latest_plan: Optional[PlanResult] = None
+        self.confirmed_plan: Optional[PlanResult] = None
 
     # ---- jobs ----
     def upsert_job(self, job: Job) -> Job:
@@ -73,6 +74,13 @@ class Store:
 
     def get_plan(self) -> Optional[PlanResult]:
         return self.latest_plan
+
+    def set_confirmed_plan(self, plan: PlanResult) -> None:
+        with self._lock:
+            self.confirmed_plan = plan
+
+    def get_confirmed_plan(self) -> Optional[PlanResult]:
+        return self.confirmed_plan
 
     def find_job_day(self, job_id: str) -> Optional[date]:
         if not self.latest_plan:

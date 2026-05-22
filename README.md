@@ -91,7 +91,7 @@ cp .env.example .env   # optional: see "Configuration" below
 uvicorn app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000/> and click **Run agents** to plan the week.
+Open <http://127.0.0.1:8000/> — the UI is a **ChatGPT-style chat** with agent traces, a draft schedule in the thread, and a **Live schedule** tab for the plan you confirm. Click **API keys** in the header for where to put your OpenAI / Supabase credentials (in `.env` on the server).
 
 ## Configuration
 
