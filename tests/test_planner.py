@@ -37,6 +37,11 @@ def fresh_seed(monkeypatch):
 
     monkeypatch.setattr("app.agents.geo_cluster.geocoder.geocode", _fake_geocode)
     monkeypatch.setattr("app.row_import.geocoder.geocode", _fake_geocode)
+
+    async def _fake_llm_chat(*_a, **_kw):
+        return None  # force template fallbacks in tests
+
+    monkeypatch.setattr("app.llm.llm.chat", _fake_llm_chat)
     yield
 
 

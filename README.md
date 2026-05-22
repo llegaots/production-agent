@@ -99,10 +99,22 @@ Open <http://127.0.0.1:3000/> — the UI is a **ChatGPT-style chat** with agent 
 
 Both integrations are optional. The product is fully functional offline.
 
-### LLM (optional)
+### LLM — Claude agents (recommended)
 
-Set `OPENAI_API_KEY` to enable LLM-authored narrative review and
-personalized client messages. Otherwise deterministic templates are used.
+Set `ANTHROPIC_API_KEY` in `.env` (and optionally `ANTHROPIC_MODEL`).
+The app uses **Anthropic Claude** for plan summaries, client confirmation
+messages, message critic, and address refinement. Scheduling logic stays
+deterministic.
+
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+Faster/cheaper: `claude-3-5-haiku-20241022`. Legacy OpenAI still works with
+`LLM_PROVIDER=openai` and `OPENAI_API_KEY` (use a real model id like `gpt-4o-mini`,
+not `gpt-5.5`).
 
 ### Google Geocoding (recommended)
 

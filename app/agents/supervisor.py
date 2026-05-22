@@ -71,11 +71,13 @@ class SupervisorAgent(Agent):
         await ctx.emit(
             "System",
             "config",
-            f"Runtime: LLM {'enabled' if llm.enabled else 'off'} ({llm.model if llm.enabled else 'templates'}), "
+            f"Runtime: LLM {'enabled' if llm.enabled else 'off'} "
+            f"({llm.provider_label} · {llm.model if llm.enabled else 'templates'}), "
             f"Geocoding {'enabled' if geocoder.enabled else 'off'}, "
             f"Supabase {'enabled' if supabase.enabled else 'off'}.",
             detail={
                 "llm_enabled": llm.enabled,
+                "llm_provider": llm.provider,
                 "llm_model": llm.model if llm.enabled else None,
                 "geocoding_enabled": geocoder.enabled,
                 "supabase_enabled": supabase.enabled,

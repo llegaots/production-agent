@@ -86,6 +86,7 @@ async def health() -> dict:
     return {
         "ok": True,
         "llm_enabled": llm.enabled,
+        "llm_provider": llm.provider if llm.enabled else None,
         "model": llm.model if llm.enabled else None,
         "supabase_enabled": supabase.enabled,
     }
@@ -137,14 +138,18 @@ async def get_config() -> dict:
     """Safe runtime config for the UI (no secrets)."""
     return {
         "llm_enabled": llm.enabled,
+        "llm_provider": llm.provider if llm.enabled else None,
+        "llm_provider_label": llm.provider_label if llm.enabled else None,
         "llm_model": llm.model if llm.enabled else None,
         "geocoding_enabled": geocoder.enabled,
         "supabase_enabled": supabase.enabled,
         "env_file": ".env",
         "env_vars": {
-            "OPENAI_API_KEY": "Enables LLM summaries and client messages",
-            "OPENAI_BASE_URL": "Optional OpenAI-compatible API base URL",
-            "OPENAI_MODEL": "Model id (default gpt-4o-mini)",
+            "ANTHROPIC_API_KEY": "Claude agents (recommended) — summaries & client messages",
+            "ANTHROPIC_MODEL": "Claude model (default claude-sonnet-4-20250514)",
+            "LLM_PROVIDER": "anthropic | openai (auto-detect if unset)",
+            "OPENAI_API_KEY": "Optional OpenAI instead of Claude",
+            "OPENAI_MODEL": "OpenAI model (default gpt-4o-mini)",
             "GOOGLE_MAPS_API_KEY": "Google Geocoding API — address → lat/lng in Geo agent",
             "SUPABASE_URL": "Optional persistence",
             "SUPABASE_SERVICE_ROLE_KEY": "Server-only; never put in the browser",
