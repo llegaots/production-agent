@@ -57,16 +57,24 @@ async def _startup() -> None:
     # If Supabase is configured, hydrate from the database so the agents
     # see real persisted data. Otherwise fall back to the in-memory seed
     # so the demo still runs offline.
+    #
+    # Cap wait at 8s so a bad SUPABASE_URL cannot block the server from
+    # accepting connections (which browsers report as ERR_EMPTY_RESPONSE).
     if supabase.enabled:
         try:
-            info = await hydrate_from_supabase()
+            info = await asyncio.wait_for(hydrate_from_supabase(), timeout=8.0)
             if not info.get("jobs"):
-                # Empty database: seed it from the demo dataset.
                 seed(reset=True)
         except Exception:
             seed(reset=True)
     else:
         seed(reset=True)
+
+
+@app.get("/api/ping")
+async def ping() -> dict:
+    """Lightweight liveness check (no store access)."""
+    return {"pong": True}
 
 
 # ---------- read endpoints ----------

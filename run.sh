@@ -18,4 +18,11 @@ echo "Open that URL in your browser and click \"Run agents\"."
 echo "Press Ctrl+C to stop."
 echo ""
 
-exec python3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port "$PORT"
+# --reload can cause flaky ERR_EMPTY_RESPONSE on some Windows setups.
+# Use RELOAD=1 ./run.sh to enable it.
+EXTRA=""
+if [ "${RELOAD:-0}" = "1" ]; then
+  EXTRA="--reload"
+fi
+
+exec python3 -m uvicorn app.main:app $EXTRA --host 127.0.0.1 --port "$PORT"
