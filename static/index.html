@@ -28,6 +28,19 @@
     @keyframes blink { 50% { opacity: 0.3; } }
     .cursor-blink { animation: blink 1s step-end infinite; }
     [x-cloak] { display: none !important; }
+    .timeline-grid { display: grid; min-width: max-content; }
+    .timeline-hour-cell { border-left: 1px solid #262626; min-height: 52px; }
+    .timeline-block {
+      position: absolute; top: 4px; bottom: 4px; border-radius: 4px;
+      border: 1px solid rgba(16,163,127,0.45); background: rgba(16,163,127,0.22);
+      font-size: 10px; line-height: 1.2; padding: 2px 4px; overflow: hidden;
+      z-index: 2; cursor: default;
+    }
+    .timeline-block.travel { background: rgba(64,64,64,0.35); border-color: #404040; opacity: 0.85; }
+    .timeline-block.overbooked { border-color: rgba(251,191,36,0.6); background: rgba(251,191,36,0.15); }
+    .timeline-lane { position: relative; min-height: 52px; background: repeating-linear-gradient(
+      90deg, transparent, transparent calc(100% / var(--hour-span, 14) - 1px), #1a1a1a calc(100% / var(--hour-span, 14) - 1px), #1a1a1a calc(100% / var(--hour-span, 14))
+    ); }
   </style>
 </head>
 <body class="bg-surface-950 text-neutral-100 h-screen overflow-hidden" x-data="app()" x-init="init()">
@@ -200,21 +213,143 @@
       </div>
     </div>
 
-    <!-- ========== SCHEDULE TAB (confirmed only) ========== -->
-    <div x-show="tab === 'schedule'" class="flex-1 min-h-0 overflow-auto scroll-thin p-4" x-cloak>
-      <template x-if="!confirmedPlan">
-        <div class="text-center py-16 text-neutral-500">
-          <p class="text-sm mb-2">No live schedule yet.</p>
-          <p class="text-xs">Plan in <button @click="tab='chat'" class="text-accent-500 underline">Chat</button>, then click <strong>Publish to live schedule</strong>.</p>
+    <!-- ========== SCHEDULE TAB (timeline: day / week / month) ========== -->
+    <div x-show="tab === 'schedule'" class="flex flex-col flex-1 min-h-0" x-cloak>
+      <template x-if="!activeSchedulePlan()">
+        <div class="text-center py-16 text-neutral-500 flex-1">
+          <p class="text-sm mb-2">No schedule to display yet.</p>
+          <p class="text-xs">Plan in <button @click="tab='chat'" class="text-accent-500 underline">Chat</button>, then publish or view the draft here.</p>
         </div>
       </template>
-      <template x-if="confirmedPlan">
-        <div class="mb-4">
-          <h2 class="text-lg font-semibold">Live schedule</h2>
-          <p class="text-xs text-neutral-400" x-text="confirmedPlan.plan.summary || 'Published plan'"></p>
-          <p class="text-[10px] text-neutral-500 mt-1">Week of <span x-text="confirmedPlan.plan.week_start"></span> · Updates here when you confirm in chat</p>
+
+      <template x-if="activeSchedulePlan()">
+        <div class="shrink-0 px-4 py-3 border-b border-surface-800 flex flex-wrap items-center gap-3">
+          <div>
+            <h2 class="text-lg font-semibold">Schedule</h2>
+            <p class="text-[10px] text-neutral-500" x-text="scheduleSubtitle()"></p>
+          </div>
+          <div class="flex items-center gap-1 ml-auto bg-surface-900 rounded-lg p-0.5 text-xs">
+            <button @click="scheduleView = 'day'" class="px-3 py-1.5 rounded-md transition"
+                    :class="scheduleView === 'day' ? 'bg-surface-800 text-white' : 'text-neutral-400'">Day</button>
+            <button @click="scheduleView = 'week'" class="px-3 py-1.5 rounded-md transition"
+                    :class="scheduleView === 'week' ? 'bg-surface-800 text-white' : 'text-neutral-400'">Week</button>
+            <button @click="scheduleView = 'month'" class="px-3 py-1.5 rounded-md transition"
+                    :class="scheduleView === 'month' ? 'bg-surface-800 text-white' : 'text-neutral-400'">Month</button>
+          </div>
+          <div class="flex items-center gap-1 bg-surface-900 rounded-lg p-0.5 text-xs" x-show="draftPlan && confirmedPlan">
+            <button @click="scheduleSource = 'live'" class="px-2 py-1.5 rounded-md"
+                    :class="scheduleSource === 'live' ? 'bg-accent-500/20 text-accent-500' : 'text-neutral-400'">Live</button>
+            <button @click="scheduleSource = 'draft'" class="px-2 py-1.5 rounded-md"
+                    :class="scheduleSource === 'draft' ? 'bg-accent-500/20 text-accent-500' : 'text-neutral-400'">Draft</button>
+          </div>
+          <div class="flex items-center gap-1 text-xs">
+            <button @click="scheduleNav(-1)" class="px-2 py-1 rounded border border-surface-700 hover:bg-surface-800">←</button>
+            <button @click="scheduleGoToday()" class="px-2 py-1 rounded border border-surface-700 hover:bg-surface-800">Today</button>
+            <button @click="scheduleNav(1)" class="px-2 py-1 rounded border border-surface-700 hover:bg-surface-800">→</button>
+          </div>
+          <span class="text-xs font-medium text-neutral-300 w-full sm:w-auto" x-text="scheduleRangeLabel()"></span>
         </div>
-        <div class="overflow-x-auto" x-html="buildScheduleTable(confirmedPlan)"></div>
+
+        <!-- DAY: crews × hour columns -->
+        <div x-show="scheduleView === 'day'" class="flex-1 min-h-0 overflow-auto scroll-thin p-4">
+          <div class="timeline-grid border border-surface-800 rounded-lg overflow-hidden"
+               :style="`grid-template-columns: 11rem repeat(${scheduleDayHourLabels().length}, minmax(3.25rem, 1fr))`">
+            <div class="bg-surface-900 border-b border-surface-800 px-2 py-2 text-[10px] text-neutral-500 font-medium sticky left-0 z-10">Crew</div>
+            <template x-for="h in scheduleDayHourLabels()" :key="h">
+              <div class="bg-surface-900 border-b border-l border-surface-800 px-1 py-2 text-[10px] text-neutral-500 text-center mono" x-text="h"></div>
+            </template>
+            <template x-for="crew in crews" :key="'day-'+crew.id">
+              <div class="bg-surface-900/80 border-t border-surface-800 px-2 py-2 text-xs font-medium sticky left-0 z-10 flex flex-col justify-center">
+                <span x-text="crew.name"></span>
+                <span class="text-[10px] text-neutral-500 font-normal" x-text="scheduleCrewDayMeta(crew.id)"></span>
+              </div>
+              <div class="timeline-lane border-t border-surface-800 relative"
+                   style="grid-column: 2 / -1"
+                   :style="`--hour-span: ${scheduleDayHourLabels().length}`">
+                <template x-for="block in scheduleBlocksForCrewDay(crew.id, scheduleCursor)" :key="block.key">
+                  <div class="timeline-block"
+                       :class="{ 'travel': block.type === 'travel', 'overbooked': block.overbooked }"
+                       :style="block.style"
+                       :title="block.title">
+                    <div class="font-medium truncate" x-text="block.label"></div>
+                    <div class="text-[9px] text-neutral-400 mono" x-text="block.time"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+          <p class="text-[10px] text-neutral-500 mt-2">Shift starts 8:00 AM · Blocks show arrival window and job duration · Gray = drive time</p>
+        </div>
+
+        <!-- WEEK: crews × weekday columns -->
+        <div x-show="scheduleView === 'week'" class="flex-1 min-h-0 overflow-auto scroll-thin p-4">
+          <div class="timeline-grid border border-surface-800 rounded-lg overflow-hidden min-w-full"
+               :style="`grid-template-columns: 11rem repeat(${scheduleWeekDays().length}, minmax(8rem, 1fr))`">
+            <div class="bg-surface-900 border-b border-surface-800 px-2 py-2 text-[10px] text-neutral-500 sticky left-0 z-10">Crew</div>
+            <template x-for="d in scheduleWeekDays()" :key="d.iso">
+              <div class="bg-surface-900 border-b border-l border-surface-800 px-2 py-2 text-[10px] text-center">
+                <div class="font-medium text-neutral-300" x-text="d.weekday"></div>
+                <div class="text-neutral-500" x-text="d.label"></div>
+              </div>
+            </template>
+            <template x-for="crew in crews" :key="'wk-'+crew.id">
+              <div class="bg-surface-900/80 border-t border-surface-800 px-2 py-2 text-xs font-medium sticky left-0 z-10" x-text="crew.name"></div>
+              <template x-for="d in scheduleWeekDays()" :key="crew.id+d.iso">
+                <div class="border-t border-l border-surface-800 p-1.5 min-h-[4.5rem] align-top bg-surface-950/30">
+                  <template x-for="block in scheduleBlocksForCrewDay(crew.id, d.iso)" :key="block.key">
+                    <div class="mb-1 px-1.5 py-1 rounded text-[10px] border"
+                         :class="block.type === 'travel' ? 'border-surface-700 bg-surface-800/50 text-neutral-500' : 'border-accent-500/30 bg-accent-500/15 text-neutral-200'">
+                      <div class="font-medium truncate" x-text="block.label"></div>
+                      <div class="mono text-neutral-500" x-text="block.time"></div>
+                    </div>
+                  </template>
+                  <span x-show="!scheduleBlocksForCrewDay(crew.id, d.iso).length" class="text-neutral-600 text-[10px]">—</span>
+                </div>
+              </template>
+            </template>
+          </div>
+        </div>
+
+        <!-- MONTH: calendar grid -->
+        <div x-show="scheduleView === 'month'" class="flex-1 min-h-0 overflow-auto scroll-thin p-4">
+          <div class="grid grid-cols-7 gap-px bg-surface-800 border border-surface-800 rounded-lg overflow-hidden text-[10px]">
+            <template x-for="wd in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']" :key="wd">
+              <div class="bg-surface-900 px-2 py-1.5 text-neutral-500 text-center font-medium" x-text="wd"></div>
+            </template>
+            <template x-for="cell in scheduleMonthCells()" :key="cell.iso || cell.pad">
+              <div class="bg-surface-950 min-h-[5.5rem] p-1.5"
+                   :class="cell.iso === scheduleCursor ? 'ring-1 ring-inset ring-accent-500/50' : ''">
+                <template x-if="cell.iso">
+                  <div>
+                    <div class="flex justify-between items-baseline mb-1">
+                      <span class="font-medium" :class="cell.inMonth ? 'text-neutral-200' : 'text-neutral-600'" x-text="cell.dayNum"></span>
+                      <button x-show="cell.jobCount" @click="scheduleCursor = cell.iso; scheduleView = 'day'"
+                              class="text-accent-500 hover:underline text-[9px]">Day</button>
+                    </div>
+                    <template x-for="chip in cell.chips" :key="chip.key">
+                      <div class="truncate px-1 py-0.5 rounded mb-0.5 border border-surface-700 bg-surface-900 text-neutral-400"
+                           :title="chip.title">
+                        <span class="text-accent-500" x-text="chip.crewShort"></span>
+                        <span x-text="' ' + chip.time + ' · ' + chip.label"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="activeSchedulePlan()?.plan?.conflicts?.length" class="shrink-0 px-4 pb-3">
+          <div class="text-amber-400/90 text-[11px] rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
+            <strong>Warnings</strong>
+            <ul class="list-disc ml-4 mt-1">
+              <template x-for="c in (activeSchedulePlan().plan.conflicts || []).slice(0, 5)" :key="c">
+                <li x-text="c"></li>
+              </template>
+            </ul>
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -279,6 +414,9 @@
         showSettings: false,
         showTracePanel: true,
         traceLog: [],
+        scheduleView: 'week',
+        scheduleSource: 'live',
+        scheduleCursor: '',
         pendingImport: null,
         importOverrides: {},
         _msgId: 0,
@@ -299,6 +437,7 @@
           this.draftPlan = draft;
           this.confirmedPlan = confirmed;
           this.config = cfg;
+          this.initScheduleCursor();
           if (draft) {
             this.pushAssistant('Loaded the latest draft plan from the server.', { scheduleHtml: this.buildScheduleTable(draft), actions: this.draftActions() });
             if (draft.events?.length) {
@@ -615,6 +754,8 @@
                   this.scrollChat();
                 } else if (payload.type === 'result') {
                   this.draftPlan = payload.data;
+                  this.scheduleSource = 'draft';
+                  if (payload.data.plan?.week_start) this.scheduleCursor = payload.data.plan.week_start;
                   (payload.data.events || []).forEach(e => this.pushTrace(e));
                   this.refreshJobs();
                 } else if (payload.type === 'error') {
@@ -649,6 +790,8 @@
             const r = await fetch('/api/plan/confirm', { method: 'POST' });
             if (!r.ok) throw new Error(await r.text());
             this.confirmedPlan = await r.json();
+            this.scheduleSource = 'live';
+            this.initScheduleCursor();
             this.tab = 'schedule';
             this.pushAssistant('Published to **Live schedule**. Open the Live schedule tab to see the confirmed week. Client confirmations can still be done per job from the draft.');
           } catch (e) {
@@ -720,48 +863,245 @@
           return c ? c.name : id;
         },
 
+        /* ---- Schedule timeline (ServiceMate-style) ---- */
+        SCHEDULE_SHIFT_START: 8 * 60,
+        SCHEDULE_GRID_START: 6 * 60,
+        SCHEDULE_GRID_END: 20 * 60,
+
+        activeSchedulePlan() {
+          if (this.scheduleSource === 'draft' && this.draftPlan?.plan?.days?.length) return this.draftPlan;
+          if (this.confirmedPlan?.plan?.days?.length) return this.confirmedPlan;
+          if (this.draftPlan?.plan?.days?.length) return this.draftPlan;
+          return null;
+        },
+
+        initScheduleCursor() {
+          const p = this.confirmedPlan || this.draftPlan;
+          if (p?.plan?.week_start) {
+            this.scheduleCursor = p.plan.week_start;
+            if (!this.confirmedPlan && this.draftPlan) this.scheduleSource = 'draft';
+          } else if (!this.scheduleCursor) {
+            this.scheduleCursor = new Date().toISOString().slice(0, 10);
+          }
+        },
+
+        scheduleSubtitle() {
+          const p = this.activeSchedulePlan();
+          if (!p) return '';
+          const src = (this.scheduleSource === 'live' && this.confirmedPlan) ? 'Live' : 'Draft';
+          return (p.plan.summary || '') + ` · ${src}`;
+        },
+
+        scheduleRangeLabel() {
+          const d = this.parseIsoDate(this.scheduleCursor);
+          if (this.scheduleView === 'day') {
+            return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+          }
+          if (this.scheduleView === 'week') {
+            const days = this.scheduleWeekDays();
+            if (!days.length) return '';
+            const a = this.parseIsoDate(days[0].iso);
+            const b = this.parseIsoDate(days[days.length - 1].iso);
+            return `${a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${b.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+          }
+          return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        },
+
+        scheduleNav(delta) {
+          const d = this.parseIsoDate(this.scheduleCursor);
+          if (this.scheduleView === 'day') d.setDate(d.getDate() + delta);
+          else if (this.scheduleView === 'week') d.setDate(d.getDate() + delta * 7);
+          else d.setMonth(d.getMonth() + delta);
+          this.scheduleCursor = d.toISOString().slice(0, 10);
+        },
+
+        scheduleGoToday() {
+          this.scheduleCursor = new Date().toISOString().slice(0, 10);
+        },
+
+        parseIsoDate(iso) {
+          const [y, m, day] = (iso || '').split('-').map(Number);
+          return new Date(y, (m || 1) - 1, day || 1);
+        },
+
+        addDaysIso(iso, n) {
+          const d = this.parseIsoDate(iso);
+          d.setDate(d.getDate() + n);
+          return d.toISOString().slice(0, 10);
+        },
+
+        scheduleDayHourLabels() {
+          const labels = [];
+          for (let h = 6; h <= 20; h++) {
+            const ap = h >= 12 ? 'PM' : 'AM';
+            const hr = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+            labels.push(h === 12 ? '12 PM' : `${hr} ${ap}`);
+          }
+          return labels;
+        },
+
+        scheduleWeekDays() {
+          const plan = this.activeSchedulePlan();
+          let startIso = this.scheduleCursor;
+          if (plan?.plan?.week_start) {
+            const ws = this.parseIsoDate(plan.plan.week_start);
+            const cur = this.parseIsoDate(this.scheduleCursor);
+            const diff = Math.round((cur - ws) / 86400000);
+            const weekOff = Math.floor(diff / 7) * 7;
+            startIso = this.addDaysIso(plan.plan.week_start, weekOff);
+          } else {
+            const d = this.parseIsoDate(this.scheduleCursor);
+            const dow = (d.getDay() + 6) % 7;
+            d.setDate(d.getDate() - dow);
+            startIso = d.toISOString().slice(0, 10);
+          }
+          return Array.from({ length: 5 }, (_, i) => {
+            const iso = this.addDaysIso(startIso, i);
+            const dt = this.parseIsoDate(iso);
+            return {
+              iso,
+              weekday: dt.toLocaleDateString(undefined, { weekday: 'short' }),
+              label: dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+            };
+          });
+        },
+
+        minutesToClock(totalMin) {
+          const h24 = Math.floor(totalMin / 60) % 24;
+          const m = totalMin % 60;
+          const ap = h24 >= 12 ? 'PM' : 'AM';
+          const h = h24 % 12 || 12;
+          return `${h}:${String(m).padStart(2, '0')} ${ap}`;
+        },
+
+        stopTimeRange(stop, crewDay) {
+          const start = this.SCHEDULE_SHIFT_START + (stop.start_minute || 0);
+          const end = start + (stop.duration_minutes || 0);
+          return `${this.minutesToClock(start)} – ${this.minutesToClock(end)}`;
+        },
+
+        blockPositionStyle(startMin, durationMin) {
+          const span = this.SCHEDULE_GRID_END - this.SCHEDULE_GRID_START;
+          const absStart = this.SCHEDULE_SHIFT_START + startMin;
+          const left = Math.max(0, ((absStart - this.SCHEDULE_GRID_START) / span) * 100);
+          const width = Math.min(100 - left, (durationMin / span) * 100);
+          return `left:${left}%;width:${Math.max(width, 1.5)}%;`;
+        },
+
+        scheduleBlocksForCrewDay(crewId, dayIso) {
+          const plan = this.activeSchedulePlan();
+          if (!plan?.plan?.days) return [];
+          const cd = plan.plan.days.find(d => d.crew_id === crewId && d.day === dayIso);
+          if (!cd?.stops?.length) return [];
+          const blocks = [];
+          let key = 0;
+          for (const stop of cd.stops) {
+            if (stop.travel_minutes_before > 0) {
+              const travelStart = stop.start_minute - stop.travel_minutes_before;
+              blocks.push({
+                key: `${crewId}-${dayIso}-t${key++}`,
+                type: 'travel',
+                label: `Drive ${stop.travel_minutes_before}m`,
+                time: this.minutesToClock(this.SCHEDULE_SHIFT_START + travelStart),
+                title: `Travel before ${stop.job_id}`,
+                style: this.blockPositionStyle(travelStart, stop.travel_minutes_before),
+                overbooked: cd.overbooked,
+              });
+            }
+            const job = this.jobs.find(j => j.id === stop.job_id);
+            const label = job ? this.clientName(job.client_id) : stop.job_id;
+            blocks.push({
+              key: `${crewId}-${dayIso}-j${key++}`,
+              type: 'job',
+              label,
+              time: this.stopTimeRange(stop, cd),
+              title: `${label} · ${stop.duration_minutes}m`,
+              style: this.blockPositionStyle(stop.start_minute, stop.duration_minutes),
+              overbooked: cd.overbooked,
+            });
+          }
+          return blocks;
+        },
+
+        scheduleCrewDayMeta(crewId) {
+          const plan = this.activeSchedulePlan();
+          const cd = plan?.plan?.days?.find(d => d.crew_id === crewId && d.day === this.scheduleCursor);
+          if (!cd) return 'No jobs this day';
+          const n = cd.stops?.length || 0;
+          const util = Math.round((cd.utilization || 0) * 100);
+          return `${n} job${n === 1 ? '' : 's'} · ${util}% util`;
+        },
+
+        scheduleMonthCells() {
+          const d = this.parseIsoDate(this.scheduleCursor);
+          const year = d.getFullYear();
+          const month = d.getMonth();
+          const first = new Date(year, month, 1);
+          const startPad = (first.getDay() + 6) % 7;
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const cells = [];
+          for (let i = 0; i < startPad; i++) cells.push({ pad: `p${i}` });
+          const plan = this.activeSchedulePlan();
+          for (let day = 1; day <= daysInMonth; day++) {
+            const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const chips = [];
+            let jobCount = 0;
+            if (plan?.plan?.days) {
+              for (const cd of plan.plan.days.filter(x => x.day === iso)) {
+                for (const stop of cd.stops || []) {
+                  jobCount++;
+                  const job = this.jobs.find(j => j.id === stop.job_id);
+                  const crew = this.crews.find(c => c.id === cd.crew_id);
+                  chips.push({
+                    key: `${iso}-${stop.job_id}`,
+                    crewShort: (crew?.name || cd.crew_id).split(' ')[0],
+                    label: job ? this.clientName(job.client_id).split(' ')[0] : stop.job_id,
+                    time: this.stopTimeRange(stop, cd).split('–')[0].trim(),
+                    title: `${crew?.name}: ${this.stopTimeRange(stop, cd)}`,
+                  });
+                }
+              }
+            }
+            cells.push({ iso, dayNum: day, inMonth: true, jobCount, chips: chips.slice(0, 4) });
+          }
+          while (cells.length % 7 !== 0) cells.push({ pad: `t${cells.length}` });
+          return cells;
+        },
+
         buildScheduleTable(plan) {
           if (!plan?.plan?.days?.length) return '<p class="text-neutral-500 text-xs">No crew-days scheduled.</p>';
-          const start = new Date(plan.plan.week_start + 'T00:00:00');
-          const days = Array.from({ length: 5 }, (_, i) => {
-            const d = new Date(start);
-            d.setDate(start.getDate() + i);
-            return d.toISOString().slice(0, 10);
-          });
-          const fmt = iso => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-
-          let html = '<table class="w-full text-xs border-collapse"><thead><tr class="text-neutral-500">';
-          html += '<th class="text-left py-2 pr-2">Crew</th>';
-          days.forEach(d => { html += `<th class="text-left py-2 px-1">${fmt(d)}</th>`; });
+          const prev = this.scheduleSource;
+          const prevView = this.scheduleView;
+          const prevCursor = this.scheduleCursor;
+          if (plan === this.confirmedPlan) this.scheduleSource = 'live';
+          else this.scheduleSource = 'draft';
+          this.scheduleView = 'week';
+          if (plan.plan.week_start) this.scheduleCursor = plan.plan.week_start;
+          let html = '<div class="text-[10px] text-neutral-500 mb-2">Week view · times shown per job</div>';
+          html += '<div class="border border-surface-800 rounded-lg overflow-hidden">';
+          const days = this.scheduleWeekDays();
+          html += '<table class="w-full text-xs border-collapse"><thead><tr class="bg-surface-900 text-neutral-500">';
+          html += '<th class="text-left py-2 px-2">Crew</th>';
+          days.forEach(d => { html += `<th class="text-left py-2 px-1 border-l border-surface-800">${d.weekday} ${d.label}</th>`; });
           html += '</tr></thead><tbody>';
-
           for (const crew of this.crews) {
-            html += `<tr class="border-t border-surface-800 align-top"><td class="py-2 pr-2 font-medium">${crew.name}</td>`;
-            for (const day of days) {
-              const cds = plan.plan.days.filter(cd => cd.crew_id === crew.id && cd.day === day);
-              html += '<td class="py-2 px-1">';
-              if (!cds.length) html += '<span class="text-neutral-600">—</span>';
-              else cds.forEach(cd => {
-                const util = Math.round((cd.utilization || 0) * 100);
-                html += `<div class="mb-1 p-1.5 rounded bg-surface-800 border border-surface-700">`;
-                html += `<div class="text-[10px] text-neutral-500">${util}% · ${cd.total_work_minutes}m work</div>`;
-                cd.stops.forEach(s => {
-                  const j = this.jobs.find(x => x.id === s.job_id);
-                  const name = j ? this.clientName(j.client_id) : s.job_id;
-                  html += `<div class="mt-0.5 text-neutral-200">${name}</div>`;
-                });
-                html += '</div>';
+            html += `<tr class="border-t border-surface-800"><td class="py-2 px-2 font-medium">${crew.name}</td>`;
+            for (const d of days) {
+              const blocks = this.scheduleBlocksForCrewDay(crew.id, d.iso).filter(b => b.type === 'job');
+              html += '<td class="py-2 px-1 border-l border-surface-800 align-top">';
+              if (!blocks.length) html += '<span class="text-neutral-600">—</span>';
+              else blocks.forEach(b => {
+                html += `<div class="mb-1 px-1.5 py-1 rounded border border-accent-500/30 bg-accent-500/10">`;
+                html += `<div class="text-neutral-200">${b.label}</div><div class="mono text-neutral-500">${b.time}</div></div>`;
               });
               html += '</td>';
             }
             html += '</tr>';
           }
-          html += '</tbody></table>';
-          if (plan.plan.conflicts?.length) {
-            html += '<div class="mt-3 text-amber-400/90 text-[11px]"><strong>Warnings:</strong><ul class="list-disc ml-4">';
-            plan.plan.conflicts.slice(0, 5).forEach(c => { html += `<li>${c}</li>`; });
-            html += '</ul></div>';
-          }
+          html += '</tbody></table></div>';
+          this.scheduleSource = prev;
+          this.scheduleView = prevView;
+          this.scheduleCursor = prevCursor;
           return html;
         },
 
