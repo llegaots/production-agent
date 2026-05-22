@@ -206,6 +206,7 @@ async def get_config() -> dict:
             "CURSOR_API_KEY": "Cloud Agents API key — auto-launch coding agent after QA",
             "CURSOR_REPOSITORY": "GitHub repo URL (optional if git origin is set)",
             "CURSOR_REF": "Branch/ref for cloud agent (default: current git branch)",
+            "SCHEDULING_MODE": "geo_first | crew_fill | balanced | revenue_priority (default: geo_first)",
             "CURSOR_AUTO_HANDOFF": "true/false — launch agent after QA (default true when key set)",
             "CURSOR_AUTO_HANDOFF_ON_FAIL_ONLY": "true — only launch when QA fails",
             "CURSOR_AUTO_CREATE_PR": "true — cloud agent opens a PR with fixes",

@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 from ..models import Crew, EquipmentKind, Job
-from ..scheduling_prefs import SchedulingMode, placement_score_bonus
+from ..scheduling_prefs import SchedulingMode, cluster_sort_key, placement_score_bonus
 from ..storage import store
 from .base import Agent, AgentContext, haversine_km, week_days
 
@@ -99,10 +99,10 @@ class CrewMatchAgent(Agent):
         draft_plan: list[dict] = []
         unscheduled: list[str] = []
 
-        # Heaviest cluster first
+        # Sort clusters: default heaviest-first; REVENUE_PRIORITY sorts by price.
         order = sorted(
             range(len(clusters)),
-            key=lambda i: -sum(jobs_by_id[j].estimated_minutes for j in clusters[i]["job_ids"]),
+            key=lambda i: -cluster_sort_key(mode, clusters[i]["job_ids"], jobs_by_id),
         )
 
         def place(jobs: list[Job], emit_phase: str) -> bool:
