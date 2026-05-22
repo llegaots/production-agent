@@ -508,15 +508,22 @@ async def qa_run(req: QARunRequest) -> dict:
     if mode == "ai" and not llm.enabled:
         raise HTTPException(
             status_code=400,
-            detail="AI QA requires ANTHROPIC_API_KEY or OPENAI_API_KEY. Use mode=legacy without LLM.",
+            detail="AI QA requires ANTHROPIC_API_KEY or OPENAI_API_KEY in .env (then restart ./run.sh). Use mode=legacy without LLM.",
         )
-    runner = QATeamRunner()
-    report = await runner.run_full_suite(
-        reset_seed=req.reset_seed,
-        auto_cursor_handoff=req.auto_cursor_handoff,
-        mode=mode,
-    )
-    return report.to_dict()
+    try:
+        runner = QATeamRunner()
+        report = await runner.run_full_suite(
+            reset_seed=req.reset_seed,
+            auto_cursor_handoff=req.auto_cursor_handoff,
+            mode=mode,
+        )
+        return report.to_dict()
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"QA run failed: {exc}") from exc
 
 
 @app.post("/api/qa/handoff/{run_id}")
