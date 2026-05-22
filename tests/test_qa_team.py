@@ -34,6 +34,13 @@ def fresh_seed(monkeypatch):
         return None
 
     monkeypatch.setattr("app.llm.llm.chat", _fake_llm_chat)
+
+    async def _noop_handoff(**_kwargs):
+        from app.cursor_client import CursorLaunchResult
+
+        return CursorLaunchResult(launched=False, skipped_reason="disabled in tests")
+
+    monkeypatch.setattr("app.qa_team.trigger_automatic_handoff", _noop_handoff)
     yield
 
 

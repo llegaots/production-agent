@@ -18,6 +18,7 @@ from .seed import seed
 from .storage import store
 from .supabase_client import supabase
 from .supabase_store import fetch_plan_db_snapshot, get_last_plan_id
+from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .vision import ACCEPTANCE_CRITERIA, PRODUCTION_MANAGER_VISION
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +49,7 @@ class QAReport:
     audit_path: str = ""
     report_json_path: str = ""
     cursor_handoff_path: str = ""
+    cursor_handoff: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -64,6 +66,7 @@ class QAReport:
             "audit_path": self.audit_path,
             "report_json_path": self.report_json_path,
             "cursor_handoff_path": self.cursor_handoff_path,
+            "cursor_handoff": self.cursor_handoff,
             "vision_excerpt": PRODUCTION_MANAGER_VISION[:400] + "…",
         }
 
@@ -74,7 +77,12 @@ class QATeamRunner:
     def __init__(self, audit: Optional[AuditLogger] = None) -> None:
         self.audit = audit or AuditLogger(label="qa")
 
-    async def run_full_suite(self, *, reset_seed: bool = True) -> QAReport:
+    async def run_full_suite(
+        self,
+        *,
+        reset_seed: bool = True,
+        auto_cursor_handoff: Optional[bool] = None,
+    ) -> QAReport:
         started = datetime.now(timezone.utc).isoformat()
         self.audit.log("QATeam", "start", "Starting full QA suite against production-manager vision.")
         scenarios: list[dict[str, Any]] = []
@@ -134,12 +142,29 @@ class QATeamRunner:
             audit_path=str(REPORTS_DIR / f"audit_{self.audit.run_id}.jsonl"),
         )
         report.report_json_path = str(self._write_json_report(report))
-        report.cursor_handoff_path = str(self._write_cursor_handoff(report))
+        handoff_path = self._write_cursor_handoff(report)
+        report.cursor_handoff_path = str(handoff_path)
+
+        launch = await trigger_automatic_handoff(
+            run_id=report.run_id,
+            handoff_path=handoff_path,
+            passed=passed,
+            overall_score=overall,
+            audit=self.audit,
+            auto_handoff=auto_cursor_handoff,
+        )
+        report.cursor_handoff = launch.to_dict()
+        attach_handoff_to_report_json(Path(report.report_json_path), launch)
+
         self.audit.log(
             "QATeam",
             "done",
             f"QA complete — score {overall}/100, passed={passed}.",
-            detail={"report_json": report.report_json_path},
+            detail={
+                "report_json": report.report_json_path,
+                "cursor_launched": launch.launched,
+                "cursor_agent_id": launch.agent_id,
+            },
         )
         return report
 
@@ -391,8 +416,8 @@ class QATeamRunner:
                 "",
                 "## For Cursor",
                 "",
-                "Paste this file into a Cursor agent session. Ask it to implement fixes,",
-                "re-run `POST /api/qa/run`, and confirm the human report in the QA tab.",
+                "When `CURSOR_API_KEY` is set, ProductionAgent auto-launches a Cursor Cloud Agent",
+                "with this report as the prompt. Otherwise paste this file into a Cursor session.",
                 "",
                 f"Audit log: `{report.audit_path}`",
             ]

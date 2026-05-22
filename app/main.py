@@ -29,6 +29,8 @@ from .models import (
     RescheduleRequest,
     RescheduleResult,
 )
+from .cursor_client import cursor_cloud
+from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .qa_team import QATeamRunner, list_qa_reports
 from .reorganize import parse_reorganize_instruction
 from .row_import import build_import_batch, materialize_import
@@ -94,6 +96,7 @@ async def health() -> dict:
         "llm_provider": llm.provider if llm.enabled else None,
         "model": llm.model if llm.enabled else None,
         "supabase_enabled": supabase.enabled,
+        "cursor_handoff_enabled": cursor_cloud.enabled,
     }
 
 
@@ -168,6 +171,10 @@ async def get_config() -> dict:
         "llm_model": llm.model if llm.enabled else None,
         "geocoding_enabled": geocoder.enabled,
         "supabase_enabled": supabase.enabled,
+        "cursor_handoff_enabled": cursor_cloud.enabled,
+        "cursor_auto_handoff": cursor_cloud.auto_handoff_default,
+        "cursor_repository": cursor_cloud.repository,
+        "cursor_ref": cursor_cloud.ref,
         "env_file": ".env",
         "env_vars": {
             "ANTHROPIC_API_KEY": "Claude agents (recommended) — summaries & client messages",
@@ -178,6 +185,12 @@ async def get_config() -> dict:
             "GOOGLE_MAPS_API_KEY": "Google Geocoding API — address → lat/lng in Geo agent",
             "SUPABASE_URL": "Optional persistence",
             "SUPABASE_SERVICE_ROLE_KEY": "Server-only; never put in the browser",
+            "CURSOR_API_KEY": "Cloud Agents API key — auto-launch coding agent after QA",
+            "CURSOR_REPOSITORY": "GitHub repo URL (optional if git origin is set)",
+            "CURSOR_REF": "Branch/ref for cloud agent (default: current git branch)",
+            "CURSOR_AUTO_HANDOFF": "true/false — launch agent after QA (default true when key set)",
+            "CURSOR_AUTO_HANDOFF_ON_FAIL_ONLY": "true — only launch when QA fails",
+            "CURSOR_AUTO_CREATE_PR": "true — cloud agent opens a PR with fixes",
         },
     }
 
@@ -197,6 +210,7 @@ class ReorganizeRequest(BaseModel):
 
 class QARunRequest(BaseModel):
     reset_seed: bool = True
+    auto_cursor_handoff: Optional[bool] = None
 
 
 @app.post("/api/plan", response_model=PlanResult)
@@ -488,8 +502,43 @@ async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
 async def qa_run(req: QARunRequest) -> dict:
     """Run the QA agent team; writes JSON + Cursor handoff under reports/."""
     runner = QATeamRunner()
-    report = await runner.run_full_suite(reset_seed=req.reset_seed)
+    report = await runner.run_full_suite(
+        reset_seed=req.reset_seed,
+        auto_cursor_handoff=req.auto_cursor_handoff,
+    )
     return report.to_dict()
+
+
+@app.post("/api/qa/handoff/{run_id}")
+async def qa_trigger_handoff(run_id: str) -> dict:
+    """Manually launch (or re-launch) a Cursor Cloud Agent for an existing QA report."""
+    json_path = ROOT / "reports" / f"qa_{run_id}.json"
+    md_path = ROOT / "reports" / f"cursor-handoff_{run_id}.md"
+    if not md_path.exists():
+        raise HTTPException(status_code=404, detail="Handoff report not found")
+    passed = False
+    score = 0
+    if json_path.exists():
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        passed = bool(data.get("passed"))
+        score = int(data.get("overall_score") or 0)
+
+    result = await trigger_automatic_handoff(
+        run_id=run_id,
+        handoff_path=md_path,
+        passed=passed,
+        overall_score=score,
+        force=True,
+    )
+    attach_handoff_to_report_json(json_path, result)
+    return result.to_dict()
+
+
+@app.get("/api/cursor/agents/{agent_id}")
+async def cursor_agent_status(agent_id: str) -> dict:
+    if not cursor_cloud.enabled:
+        raise HTTPException(status_code=400, detail="CURSOR_API_KEY not configured")
+    return await cursor_cloud.get_agent(agent_id)
 
 
 @app.get("/api/qa/reports")

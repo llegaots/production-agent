@@ -395,10 +395,29 @@
                 </li>
               </template>
             </ul>
-            <div class="mt-3 text-xs text-neutral-500">
-              <p class="font-medium text-neutral-300 mb-1">Cursor handoff</p>
-              <p x-text="qaReport.cursor_handoff_path || 'reports/cursor-handoff_*.md'"></p>
-              <p class="mt-1">Paste that file into Cursor to have the coding team apply fixes.</p>
+            <div class="mt-3 text-xs text-neutral-500 space-y-2">
+              <p class="font-medium text-neutral-300">Cursor cloud agent</p>
+              <template x-if="qaReport.cursor_handoff?.launched">
+                <div class="rounded border border-accent-500/30 bg-accent-500/5 p-2">
+                  <p class="text-accent-500">Agent launched automatically</p>
+                  <p class="mono mt-1" x-text="qaReport.cursor_handoff.agent_id"></p>
+                  <p class="text-neutral-400" x-text="'Status: ' + (qaReport.cursor_handoff.status || 'starting')"></p>
+                  <a x-show="qaReport.cursor_handoff.agent_url" :href="qaReport.cursor_handoff.agent_url" target="_blank" rel="noopener"
+                     class="text-accent-500 underline mt-1 inline-block">Open in Cursor →</a>
+                  <a x-show="qaReport.cursor_handoff.pr_url" :href="qaReport.cursor_handoff.pr_url" target="_blank" rel="noopener"
+                     class="text-accent-500 underline mt-1 inline-block ml-2">View PR →</a>
+                </div>
+              </template>
+              <template x-if="qaReport.cursor_handoff && !qaReport.cursor_handoff.launched">
+                <div class="rounded border border-amber-500/30 bg-amber-500/5 p-2">
+                  <p class="text-amber-300" x-text="qaReport.cursor_handoff.skipped_reason || qaReport.cursor_handoff.error || 'Not launched'"></p>
+                  <button @click="launchCursorHandoff(qaReport.run_id)" :disabled="qaRunning"
+                          class="mt-2 text-xs px-2 py-1 rounded border border-surface-700 hover:bg-surface-800">
+                    Launch Cursor agent now
+                  </button>
+                </div>
+              </template>
+              <p class="text-[10px]" x-text="'Handoff file: ' + (qaReport.cursor_handoff_path || '')"></p>
             </div>
           </div>
         </template>
@@ -788,6 +807,23 @@
         async loadQaReport(runId) {
           const r = await fetch('/api/qa/reports/' + runId);
           if (r.ok) this.qaReport = await r.json();
+        },
+
+        async launchCursorHandoff(runId) {
+          if (!runId || this.qaRunning) return;
+          this.qaRunning = true;
+          try {
+            const r = await fetch('/api/qa/handoff/' + runId, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || 'Handoff failed');
+            if (this.qaReport?.run_id === runId) {
+              this.qaReport.cursor_handoff = data;
+            }
+          } catch (e) {
+            alert('Cursor handoff: ' + e.message);
+          } finally {
+            this.qaRunning = false;
+          }
         },
 
         async runImportParse(text) {

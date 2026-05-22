@@ -172,6 +172,27 @@ To create the schema in a fresh Supabase project, run
 | `POST` | `/api/jobs/{id}/confirm` | Mark a job client-confirmed |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a job (also drops from plan) |
 | `POST` | `/api/seed/reset` | Reset the demo dataset |
+| `POST` | `/api/qa/run` | Run QA agent team; auto-launches Cursor Cloud Agent when configured |
+| `POST` | `/api/qa/handoff/{run_id}` | Manually (re)launch Cursor agent for a QA report |
+| `POST` | `/api/reorganize/stream` | Chat-driven replan or single-job reschedule (SSE) |
+| `PUT` | `/api/preferences/scheduling` | `geo_first` \| `crew_fill` \| `balanced` |
+
+### Automatic Cursor handoff after QA
+
+When `CURSOR_API_KEY` is set (Cloud Agents key from the Cursor dashboard), each `POST /api/qa/run`:
+
+1. Writes `reports/cursor-handoff_{run_id}.md` and `reports/qa_{run_id}.json`
+2. **Automatically** calls the [Cursor Cloud Agents API](https://cursor.com/docs/cloud-agent/api/endpoints) with that report as the agent prompt
+3. Returns `cursor_handoff` in the JSON response (`agent_id`, `agent_url`, `pr_url` when ready)
+
+Configure in `.env` (see `.env.example`):
+
+- `CURSOR_API_KEY` — required
+- `CURSOR_REPOSITORY` — optional if `git remote` origin is GitHub
+- `CURSOR_REF` — branch to work on (defaults to current git branch)
+- `CURSOR_AUTO_HANDOFF_ON_FAIL_ONLY=true` — only launch when QA fails
+
+Open the **QA report** tab in the UI to see launch status and a link to the cloud agent.
 
 ## Tests
 
