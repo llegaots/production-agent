@@ -66,14 +66,25 @@ class SupervisorAgent(Agent):
     ) -> PlanResult:
         ws = week_start or _next_monday()
         week_end = week_days(ws)[-1]   # last working day of the 5-day window
-        jobs = [
+
+        eligible_statuses = ("pending", "scheduled", "rescheduled")
+        all_eligible = [
             j for j in store.list_jobs()
-            if j.status.value in ("pending", "scheduled", "rescheduled")
+            if j.status.value in eligible_statuses
+        ]
+        jobs = [
+            j for j in all_eligible
             # Only offer jobs whose date window overlaps with the planning week.
             # A job with earliest_date > week_end is not due yet; one with
             # latest_date < ws is already overdue (handled separately).
-            and j.earliest_date <= week_end
-            and j.latest_date >= ws
+            if j.earliest_date <= week_end and j.latest_date >= ws
+        ]
+        # Jobs excluded because their date window doesn't overlap the planning
+        # week are tracked so they appear in the unscheduled list rather than
+        # silently disappearing from accounting.
+        out_of_window_ids = [
+            j.id for j in all_eligible
+            if j.earliest_date > week_end or j.latest_date < ws
         ]
         crews = store.list_crews()
         mode = (
@@ -112,8 +123,17 @@ class SupervisorAgent(Agent):
         await ctx.emit(
             self.name,
             "start",
-            f"Planning week starting {ws.isoformat()} with {len(jobs)} jobs across {len(crews)} crews.",
+            f"Planning week starting {ws.isoformat()} with {len(jobs)} jobs across {len(crews)} crews. "
+            f"{len(out_of_window_ids)} job(s) outside this week's window (deferred).",
         )
+        if out_of_window_ids:
+            await ctx.emit(
+                self.name,
+                "deferred",
+                f"{len(out_of_window_ids)} job(s) deferred — date window outside [{ws.isoformat()}, {week_end.isoformat()}]: "
+                + ", ".join(out_of_window_ids[:10]),
+                detail={"out_of_window_job_ids": out_of_window_ids},
+            )
 
         # Phase 1 - sequential dependencies: geo cluster -> crew match
         await self.geo.run(ctx)
@@ -136,7 +156,18 @@ class SupervisorAgent(Agent):
         await self.reviewer.run(ctx)
 
         crew_days: list[CrewDay] = ctx.blackboard.get("crew_days", [])
-        unscheduled: list[str] = ctx.blackboard.get("unscheduled", [])
+        # Merge scheduler-deferred jobs with pre-filter out-of-window jobs so the
+        # caller sees all unplaceable jobs in one list (no silent drops).
+        _scheduled_ids = {s.job_id for cd in crew_days for s in cd.stops}
+        _crew_deferred: list[str] = [
+            jid for jid in ctx.blackboard.get("unscheduled", [])
+            if jid not in _scheduled_ids
+        ]
+        _ow_deferred: list[str] = [
+            jid for jid in out_of_window_ids
+            if jid not in _scheduled_ids and jid not in _crew_deferred
+        ]
+        unscheduled: list[str] = _crew_deferred + _ow_deferred
         conflicts: list[str] = list(ctx.blackboard.get("equipment_conflicts", []))
         for g in ctx.blackboard.get("equipment_gaps", []):
             conflicts.append(

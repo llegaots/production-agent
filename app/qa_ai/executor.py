@@ -1,7 +1,7 @@
 """Execute AI-designed QA scenarios against the real agent stack."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from ..agents import ReschedulerAgent, SupervisorAgent
@@ -46,7 +46,8 @@ async def execute_case(
 
     setup = case.get("setup") or {}
     if reset_seed or setup.get("reset_seed", True):
-        seed(reset=True)
+        # Pass the planning week so seed date windows align with the QA run.
+        seed(reset=True, week_start=ws)
 
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
@@ -80,23 +81,67 @@ async def execute_case(
                 "mode": intent.scheduling_mode.value,
                 "job_id": intent.job_id,
                 "target_day": intent.target_day.isoformat() if intent.target_day else None,
+                "deferred_to_next_week": intent.deferred_to_next_week,
+                "deferred_job_ids": intent.deferred_job_ids,
+                "safety_priority": intent.safety_priority,
             }
+
+            # Determine window extension when owner says "next week":
+            # ws is Monday of current week; +11 days = Friday of next week.
+            next_week_latest = (ws + timedelta(days=11)) if intent.deferred_to_next_week else None
+
             if intent.job_id and plan:
                 agent = ReschedulerAgent()
                 plan = store.get_plan() or plan
+
+                # When owner defers to next week, extend the availability window
+                # so the reschedule agent can find slots beyond this week's dates.
+                reschedule_kwargs: dict = {"preferred_day": intent.target_day}
+                if intent.deferred_to_next_week and next_week_latest:
+                    reschedule_kwargs["new_latest"] = next_week_latest
+
                 res = await agent.run_reschedule(
                     plan,
                     intent.job_id,
                     intent.reason,
-                    preferred_day=intent.target_day,
+                    **reschedule_kwargs,
                 )
-                plan = store.get_plan()
+                plan = store.get_plan() or plan
+
+                # If reschedule failed, explicitly mark the job as unscheduled so
+                # the QA critic can see it was deferred rather than silently lost.
+                if not res.succeeded and intent.job_id not in plan.plan.unscheduled_job_ids:
+                    plan.plan.unscheduled_job_ids.append(intent.job_id)
+                    store.set_plan(plan)
+
                 out.final_plan = plan
                 evt["reschedule"] = {
                     "succeeded": res.succeeded,
                     "new_day": res.new_day.isoformat() if res.new_day else None,
                     "new_crew_id": res.new_crew_id,
+                    "failure_reason": "no_slot_in_window" if not res.succeeded else None,
                 }
+
+                # Also reschedule any additional jobs named for batch deferral
+                for extra_jid in intent.deferred_job_ids:
+                    if not plan:
+                        break
+                    extra_kwargs: dict = {"preferred_day": intent.target_day}
+                    if intent.deferred_to_next_week and next_week_latest:
+                        extra_kwargs["new_latest"] = next_week_latest
+                    extra_res = await agent.run_reschedule(
+                        plan, extra_jid, intent.reason, **extra_kwargs
+                    )
+                    plan = store.get_plan() or plan
+                    if not extra_res.succeeded and extra_jid not in plan.plan.unscheduled_job_ids:
+                        plan.plan.unscheduled_job_ids.append(extra_jid)
+                        store.set_plan(plan)
+                    out.final_plan = plan
+                    evt.setdefault("batch_reschedule", []).append({
+                        "job_id": extra_jid,
+                        "succeeded": extra_res.succeeded,
+                        "new_day": extra_res.new_day.isoformat() if extra_res.new_day else None,
+                    })
             else:
                 sup = SupervisorAgent()
                 plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)

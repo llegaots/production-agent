@@ -11,7 +11,8 @@ Designed to stress-test the scheduler:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from typing import Optional
 
 from .models import (
     Client,
@@ -44,7 +45,19 @@ _DORVAL          = (45.4520, -73.7450)   # ~23 km E  (stretch)
 _DDO             = (45.4950, -73.8550)   # ~18 km NE
 
 
-def seed(reset: bool = True) -> None:
+_DEFAULT_WEEK = date(2026, 7, 6)   # Monday — kept for backward-compat with existing tests
+
+
+def seed(reset: bool = True, week_start: Optional[date] = None) -> None:
+    """Populate the in-memory store with the West Island demo dataset.
+
+    Args:
+        reset: Clear the store before seeding (default True).
+        week_start: Monday of the target planning week.  When provided the job
+            date windows are computed relative to that week so the QA executor
+            can align seed data with the current planning window.  Defaults to
+            the hard-coded July 2026 week so all existing tests remain green.
+    """
     if reset:
         store.clients.clear()
         store.crews.clear()
@@ -171,17 +184,19 @@ def seed(reset: bool = True) -> None:
         store.clients[cl.id] = cl
 
     # ── Date windows ─────────────────────────────────────────────────────────
-    wk = date(2026, 7, 6)   # Monday of the planning week
-    w_end = date(2026, 7, 10)
+    # Compute date windows relative to the requested planning week so that the
+    # QA executor (which plans for the *current* week) picks up these jobs.
+    wk    = week_start if week_start is not None else _DEFAULT_WEEK
+    w_end = wk + timedelta(days=4)           # Friday of the same week
 
     # Tight: must happen early in week
-    early   = (date(2026, 7, 6),  date(2026, 7, 8))
+    early   = (wk,                wk + timedelta(days=2))   # Mon–Wed
     # Flexible: full week
-    full_wk = (date(2026, 7, 6),  date(2026, 7, 10))
+    full_wk = (wk,                w_end)
     # Late-week only
-    late    = (date(2026, 7, 8),  date(2026, 7, 10))
-    # Future window (stress test: should be deferred, not forced in)
-    future  = (date(2026, 8, 3),  date(2026, 8, 7))
+    late    = (wk + timedelta(days=2), w_end)               # Wed–Fri
+    # Future window: 4 weeks out (stress test: should be deferred, not placed)
+    future  = (wk + timedelta(weeks=4), wk + timedelta(weeks=4, days=4))
 
     # ── Jobs ─────────────────────────────────────────────────────────────────
     # Naming convention:

@@ -74,8 +74,12 @@ def test_plan_week_assigns_most_jobs():
     ]
     scheduled = sum(len(d.stops) for d in plan.days)
     # Every in-window job must be either scheduled or explicitly deferred.
-    assert scheduled + len(plan.unscheduled_job_ids) == len(in_window), (
-        f"scheduled({scheduled}) + unscheduled({len(plan.unscheduled_job_ids)}) "
+    # unscheduled_job_ids may also contain out-of-window jobs (tracked for
+    # transparency); exclude those from the accounting check.
+    in_window_ids = {j.id for j in in_window}
+    in_window_unscheduled = [jid for jid in plan.unscheduled_job_ids if jid in in_window_ids]
+    assert scheduled + len(in_window_unscheduled) == len(in_window), (
+        f"scheduled({scheduled}) + in-window-unscheduled({len(in_window_unscheduled)}) "
         f"!= in-window jobs ({len(in_window)})"
     )
     # At least 50% of in-window jobs should land.
