@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import Awaitable, Callable, Optional
 
 from ..models import AgentEvent, Crew, Job
+from ..scheduling_prefs import DEFAULT_MODE, SchedulingMode
 
 
 EventEmitter = Callable[[AgentEvent], Awaitable[None]]
@@ -19,6 +20,7 @@ class AgentContext:
     week_start: date
     crews: list[Crew]
     jobs: list[Job]
+    scheduling_mode: SchedulingMode = DEFAULT_MODE
     emitter: Optional[EventEmitter] = None
     blackboard: dict = field(default_factory=dict)
     events: list[AgentEvent] = field(default_factory=list)

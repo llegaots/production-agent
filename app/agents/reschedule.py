@@ -42,6 +42,10 @@ class ReschedulerAgent(Agent):
         job_id: str,
         reason: str,
         emitter=None,
+        *,
+        new_earliest: Optional[date] = None,
+        new_latest: Optional[date] = None,
+        preferred_day: Optional[date] = None,
     ) -> RescheduleResult:
         events: list[AgentEvent] = []
 
@@ -70,6 +74,11 @@ class ReschedulerAgent(Agent):
 
         await emit("start", f"Replanning job {job_id}: {reason}.")
 
+        window_start = new_earliest or job.earliest_date
+        window_end = new_latest or job.latest_date
+        if window_start > window_end:
+            window_start, window_end = window_end, window_start
+
         # 1) remove the job from its current crew/day
         original_day: Optional[date] = None
         original_crew: Optional[str] = None
@@ -92,15 +101,9 @@ class ReschedulerAgent(Agent):
         #    see the decision rationale, not just the final choice.
         crews_by_id = {c.id: c for c in store.list_crews()}
         candidate_days: list[date] = []
-        start = original_day or job.earliest_date
-        d = start
-        while d <= job.latest_date:
-            d = d + timedelta(days=1)
+        d = window_start
+        while d <= window_end:
             if d.weekday() < 5:
-                candidate_days.append(d)
-        d = job.earliest_date
-        while d < start:
-            if d.weekday() < 5 and d not in candidate_days:
                 candidate_days.append(d)
             d = d + timedelta(days=1)
 
@@ -133,11 +136,13 @@ class ReschedulerAgent(Agent):
                 same_crew = 1 if crew.id == original_crew else 0
                 # Score: prefer (1) sooner days, (2) same crew (continuity for
                 # the client), (3) more headroom (less risk of overrun).
+                preferred = 25 if preferred_day and day == preferred_day else 0
                 score = (
                     100
                     - day_distance * 20
                     + same_crew * 8
                     + min(20, headroom // 30)
+                    + preferred
                 )
                 candidates.append(
                     {

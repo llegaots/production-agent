@@ -62,6 +62,8 @@
           Live schedule
           <span x-show="confirmedPlan" class="w-1.5 h-1.5 rounded-full bg-accent-500"></span>
         </button>
+        <button @click="tab = 'qa'; loadQaReports()" class="px-4 py-1.5 rounded-md transition"
+                :class="tab === 'qa' ? 'bg-surface-800 text-white' : 'text-neutral-400 hover:text-neutral-200'">QA report</button>
       </nav>
       <div class="flex items-center gap-2">
         <button @click="showTracePanel = !showTracePanel" class="text-xs px-2 py-1 rounded border transition"
@@ -123,6 +125,7 @@
             </p>
             <div class="flex flex-wrap justify-center gap-2 text-sm">
               <button @click="sendPrompt('Plan this week')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Plan this week</button>
+              <button @click="sendPrompt('Reorganize the week — fill up crew days first')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Fill crews</button>
               <button @click="sendPrompt('Show draft schedule')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Show draft schedule</button>
             </div>
             <p class="text-xs text-neutral-500 mt-4">Or paste rows from your booking spreadsheet (tab-separated) into the box below.</p>
@@ -199,6 +202,15 @@
 
       <!-- Composer -->
       <div class="shrink-0 border-t border-surface-800 p-4">
+        <div class="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-neutral-500">
+          <span>Scheduling priority:</span>
+          <select x-model="schedulingMode" @change="saveSchedulingMode()"
+                  class="bg-surface-900 border border-surface-700 rounded px-2 py-1 text-xs text-neutral-200">
+            <option value="geo_first">Location first (minimize drive)</option>
+            <option value="crew_fill">Fill crew days</option>
+            <option value="balanced">Balanced</option>
+          </select>
+        </div>
         <form @submit.prevent="sendFromInput()" class="relative bg-surface-900 border border-surface-700 rounded-2xl focus-within:border-neutral-500">
           <textarea x-model="input" rows="1" placeholder="Message ProductionAgent…"
                     @keydown.enter.prevent="if (!$event.shiftKey) sendFromInput()"
@@ -208,7 +220,7 @@
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M3 11l18-7-7 18-2-8-9-3z"/></svg>
           </button>
         </form>
-        <p class="text-[10px] text-neutral-500 mt-2 text-center">Paste spreadsheet rows · Plan this week · Traces panel on the left</p>
+        <p class="text-[10px] text-neutral-500 mt-2 text-center">Paste rows · Plan · Reorganize via chat · QA tab for agent test reports</p>
       </div>
       </div>
     </div>
@@ -352,6 +364,58 @@
         </div>
       </template>
     </div>
+
+    <!-- ========== QA TAB ========== -->
+    <div x-show="tab === 'qa'" class="flex flex-col flex-1 min-h-0 overflow-hidden" x-cloak>
+      <div class="shrink-0 px-4 py-3 border-b border-surface-800 flex flex-wrap items-center gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">QA agent team</h2>
+          <p class="text-[10px] text-neutral-500">Tests schedule dynamics, rescheduling, DB persistence, and owner preferences.</p>
+        </div>
+        <button @click="runQaSuite()" :disabled="qaRunning"
+                class="ml-auto text-xs px-3 py-1.5 rounded-md bg-accent-500 text-surface-950 font-medium disabled:opacity-50">
+          <span x-text="qaRunning ? 'Running QA…' : 'Run full QA suite'"></span>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto scroll-thin p-4 space-y-4">
+        <template x-if="qaReport">
+          <div class="rounded-lg border p-4"
+               :class="qaReport.passed ? 'border-accent-500/40 bg-accent-500/5' : 'border-amber-500/40 bg-amber-500/5'">
+            <div class="flex items-baseline gap-2 mb-2">
+              <span class="text-2xl font-semibold" x-text="qaReport.overall_score + '/100'"></span>
+              <span class="text-xs px-2 py-0.5 rounded" :class="qaReport.passed ? 'bg-accent-500/20 text-accent-500' : 'bg-amber-500/20 text-amber-300'"
+                    x-text="qaReport.passed ? 'PASS' : 'NEEDS WORK'"></span>
+            </div>
+            <p class="text-xs text-neutral-400 mono" x-text="'Run ' + qaReport.run_id"></p>
+            <ul class="mt-3 space-y-1 text-sm">
+              <template x-for="c in qaReport.criteria || []" :key="c.id">
+                <li class="flex gap-2">
+                  <span x-text="c.passed ? '✓' : '✗'" :class="c.passed ? 'text-accent-500' : 'text-amber-400'"></span>
+                  <span><strong x-text="c.title"></strong> — <span class="text-neutral-400" x-text="c.evidence"></span></span>
+                </li>
+              </template>
+            </ul>
+            <div class="mt-3 text-xs text-neutral-500">
+              <p class="font-medium text-neutral-300 mb-1">Cursor handoff</p>
+              <p x-text="qaReport.cursor_handoff_path || 'reports/cursor-handoff_*.md'"></p>
+              <p class="mt-1">Paste that file into Cursor to have the coding team apply fixes.</p>
+            </div>
+          </div>
+        </template>
+        <template x-if="!qaReport && !qaRunning">
+          <p class="text-sm text-neutral-500">No QA run yet. Click <strong>Run full QA suite</strong> to generate a human-readable process report.</p>
+        </template>
+        <div x-show="qaReportsList.length" class="text-xs">
+          <p class="text-neutral-500 mb-2">Previous runs</p>
+          <template x-for="r in qaReportsList" :key="r.run_id">
+            <button @click="loadQaReport(r.run_id)" class="block w-full text-left px-2 py-1.5 rounded hover:bg-surface-800 border border-transparent hover:border-surface-700 mb-1">
+              <span class="mono text-neutral-400" x-text="r.run_id"></span>
+              <span class="text-neutral-300" x-text="' · ' + r.overall_score + '/100'"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Settings: API keys -->
@@ -434,17 +498,22 @@
         scheduleCursor: '',
         pendingImport: null,
         importOverrides: {},
+        schedulingMode: 'geo_first',
+        qaRunning: false,
+        qaReport: null,
+        qaReportsList: [],
         _msgId: 0,
         _traceKey: 0,
 
         async init() {
-          const [j, c, cl, draft, confirmed, cfg] = await Promise.all([
+          const [j, c, cl, draft, confirmed, cfg, pref] = await Promise.all([
             fetch('/api/jobs').then(r => r.json()),
             fetch('/api/crews').then(r => r.json()),
             fetch('/api/clients').then(r => r.json()),
             fetch('/api/plan').then(r => r.json()),
             fetch('/api/plan/confirmed').then(r => r.json()),
             fetch('/api/config').then(r => r.json()),
+            fetch('/api/preferences/scheduling').then(r => r.json()).catch(() => ({ mode: 'geo_first' })),
           ]);
           this.jobs = j;
           this.crews = c;
@@ -452,7 +521,9 @@
           this.draftPlan = draft;
           this.confirmedPlan = confirmed;
           this.config = cfg;
+          if (pref?.mode) this.schedulingMode = pref.mode;
           this.initScheduleCursor();
+          this.loadQaReports();
           if (draft) {
             this.pushAssistant('Loaded the latest draft plan from the server.', { scheduleHtml: this.buildScheduleTable(draft), actions: this.draftActions() });
             if (draft.events?.length) {
@@ -593,6 +664,10 @@
             await this.runPlanWeek();
             return;
           }
+          if (/reorganize|redo.*week|don't like.*schedule|dont like.*schedule|fill.*crew|minimize.*drive/i.test(lower)) {
+            await this.runReorganize(text);
+            return;
+          }
           if (/confirm|publish.*live|approve.*schedule/i.test(lower)) {
             await this.publishPlan();
             return;
@@ -616,9 +691,103 @@
           }
 
           this.pushAssistant(
-            'I can help you:\n• **Paste spreadsheet rows** (tab-separated from Excel)\n• **Plan this week** — agents + traces\n• **Publish to live schedule** — after you confirm the draft\n• **Reschedule job_003 due to rain**',
+            'I can help you:\n• **Paste spreadsheet rows** (tab-separated from Excel)\n• **Plan this week** — agents + traces\n• **Reorganize** — e.g. "fill crew days" or "minimize drive"\n• **Publish to live schedule** — after you confirm the draft\n• **Reschedule job_003 due to rain**\n• **QA report** tab — run the test agent team',
             { actions: [{ id: 'plan', label: 'Plan this week', primary: true }] }
           );
+        },
+
+        async saveSchedulingMode() {
+          await fetch('/api/preferences/scheduling', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: this.schedulingMode }),
+          });
+        },
+
+        async runReorganize(instruction) {
+          if (this.running) return;
+          this.running = true;
+          this.tab = 'chat';
+          this.traceLog = [];
+          this.showTracePanel = true;
+          const msg = this.pushAssistant('Reorganizing schedule from your instruction…', { traces: [], streaming: true });
+          try {
+            const resp = await fetch('/api/reorganize/stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ instruction }),
+            });
+            await this.consumeSseStream(resp, {
+              onChunk: (payload) => {
+                if (payload.type === 'event') {
+                  msg.traces.push(payload.data);
+                  this.pushTrace(payload.data);
+                } else if (payload.type === 'result') {
+                  if (payload.data.plan) {
+                    this.draftPlan = payload.data;
+                    msg.text = payload.data.plan?.summary || 'Reorganized week.';
+                    msg.scheduleHtml = this.buildScheduleTable(this.draftPlan);
+                    msg.actions = this.draftActions();
+                  } else if (payload.data.succeeded !== undefined) {
+                    this.draftPlan = null;
+                    fetch('/api/plan').then(r => r.json()).then(p => {
+                      this.draftPlan = p;
+                      msg.text = payload.data.client_message || 'Rescheduled.';
+                      msg.scheduleHtml = this.buildScheduleTable(this.draftPlan);
+                      msg.actions = this.draftActions();
+                    });
+                  }
+                } else if (payload.type === 'error') {
+                  msg.text = 'Error: ' + payload.data.message;
+                }
+              },
+            });
+            msg.streaming = false;
+            if (!msg.scheduleHtml && this.draftPlan) {
+              msg.scheduleHtml = this.buildScheduleTable(this.draftPlan);
+              msg.actions = this.draftActions();
+            }
+          } catch (e) {
+            msg.streaming = false;
+            msg.text = 'Reorganize failed: ' + e.message;
+          } finally {
+            this.running = false;
+          }
+        },
+
+        async runQaSuite() {
+          this.qaRunning = true;
+          this.tab = 'qa';
+          try {
+            const r = await fetch('/api/qa/run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reset_seed: true }),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || 'QA failed');
+            this.qaReport = data;
+            await this.loadQaReports();
+          } catch (e) {
+            this.qaReport = { passed: false, overall_score: 0, criteria: [], run_id: 'error', evidence: e.message };
+          } finally {
+            this.qaRunning = false;
+          }
+        },
+
+        async loadQaReports() {
+          try {
+            const r = await fetch('/api/qa/reports');
+            const data = await r.json();
+            this.qaReportsList = data.reports || [];
+          } catch (_) {
+            this.qaReportsList = [];
+          }
+        },
+
+        async loadQaReport(runId) {
+          const r = await fetch('/api/qa/reports/' + runId);
+          if (r.ok) this.qaReport = await r.json();
         },
 
         async runImportParse(text) {
@@ -776,7 +945,7 @@
             const resp = await fetch('/api/plan/stream', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({}),
+              body: JSON.stringify({ scheduling_mode: this.schedulingMode }),
             });
             await this.consumeSseStream(resp, {
               onChunk: (payload) => {

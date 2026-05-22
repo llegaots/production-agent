@@ -32,6 +32,9 @@ from .models import (
 from .storage import store
 from .supabase_client import supabase
 
+# Set by persist_plan for reschedule/QA audit linkage
+_last_persisted_plan_id: Optional[str] = None
+
 
 # ----- read / hydrate -----
 
@@ -206,7 +209,37 @@ async def persist_plan(result: PlanResult) -> Optional[str]:
             ],
         )
 
+    global _last_persisted_plan_id
+    _last_persisted_plan_id = plan_id
+    store.last_plan_id = plan_id
     return plan_id
+
+
+def get_last_plan_id() -> Optional[str]:
+    return store.last_plan_id or _last_persisted_plan_id
+
+
+async def fetch_plan_db_snapshot(plan_id: str) -> dict:
+    """Load persisted plan rows for QA verification."""
+    if not supabase.enabled or not plan_id:
+        return {"ok": False, "reason": "supabase_disabled_or_no_plan_id"}
+    plan_rows = await supabase.select("plans", filters={"id": f"eq.{plan_id}"})
+    crew_days = await supabase.select("crew_days", filters={"plan_id": f"eq.{plan_id}"})
+    cd_ids = [cd["id"] for cd in crew_days]
+    stops: list[dict] = []
+    if cd_ids:
+        for cd_id in cd_ids:
+            rows = await supabase.select("scheduled_stops", filters={"crew_day_id": f"eq.{cd_id}"})
+            stops.extend(rows)
+    events = await supabase.select("agent_events", filters={"plan_id": f"eq.{plan_id}"})
+    return {
+        "ok": True,
+        "plan": plan_rows[0] if plan_rows else None,
+        "crew_days": len(crew_days),
+        "scheduled_stops": len(stops),
+        "agent_events": len(events),
+        "stop_job_ids": sorted({s["job_id"] for s in stops}),
+    }
 
 
 async def persist_job_status(job_id: str, status: JobStatus) -> None:
@@ -241,6 +274,7 @@ async def persist_job_location(
 async def persist_reschedule_events(plan_id: Optional[str], job_id: str, events: list[AgentEvent]) -> None:
     if not supabase.enabled or not events:
         return
+    plan_id = plan_id or get_last_plan_id()
     await supabase.insert(
         "agent_events",
         [

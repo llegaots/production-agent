@@ -29,6 +29,7 @@ from ..models import (
     PlanReview,
     WeekPlan,
 )
+from ..scheduling_prefs import SchedulingMode, parse_mode
 from ..storage import store
 from .base import Agent, AgentContext, EventEmitter, llm_trace_callback
 from .client_comms import ClientCommsAgent
@@ -61,12 +62,24 @@ class SupervisorAgent(Agent):
         self,
         week_start: Optional[date] = None,
         emitter: Optional[EventEmitter] = None,
+        scheduling_mode: Optional[SchedulingMode | str] = None,
     ) -> PlanResult:
         ws = week_start or _next_monday()
         jobs = [j for j in store.list_jobs() if j.status.value in ("pending", "scheduled", "rescheduled")]
         crews = store.list_crews()
+        mode = (
+            scheduling_mode
+            if isinstance(scheduling_mode, SchedulingMode)
+            else parse_mode(scheduling_mode)
+            if scheduling_mode
+            else store.scheduling_mode
+        )
+        store.scheduling_mode = mode
 
-        ctx = AgentContext(week_start=ws, crews=crews, jobs=jobs, emitter=emitter)
+        ctx = AgentContext(
+            week_start=ws, crews=crews, jobs=jobs, scheduling_mode=mode, emitter=emitter
+        )
+        ctx.blackboard["scheduling_mode"] = mode
 
         await ctx.emit(
             "System",
@@ -83,6 +96,7 @@ class SupervisorAgent(Agent):
                 "supabase_enabled": supabase.enabled,
                 "jobs": len(jobs),
                 "crews": len(crews),
+                "scheduling_mode": mode.value,
             },
             kind="system",
         )

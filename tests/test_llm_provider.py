@@ -23,6 +23,7 @@ def test_openai_when_provider_forced(monkeypatch):
 
 def test_openai_model_alias_fixes_gpt55(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.5")
     c = LLMClient()

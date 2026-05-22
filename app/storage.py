@@ -14,6 +14,7 @@ from .models import (
     PlanResult,
     WeekPlan,
 )
+from .scheduling_prefs import DEFAULT_MODE, SchedulingMode
 
 
 class Store:
@@ -25,6 +26,8 @@ class Store:
         self.jobs: dict[str, Job] = {}
         self.latest_plan: Optional[PlanResult] = None
         self.confirmed_plan: Optional[PlanResult] = None
+        self.scheduling_mode: SchedulingMode = DEFAULT_MODE
+        self.last_plan_id: Optional[str] = None
 
     # ---- jobs ----
     def upsert_job(self, job: Job) -> Job:

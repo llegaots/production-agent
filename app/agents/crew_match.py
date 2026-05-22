@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 from ..models import Crew, EquipmentKind, Job
+from ..scheduling_prefs import SchedulingMode, placement_score_bonus
 from ..storage import store
 from .base import Agent, AgentContext, haversine_km, week_days
 
@@ -93,6 +94,7 @@ class CrewMatchAgent(Agent):
                     kinds.add(e.kind)
             crew_equipment_kinds[c.id] = kinds
 
+        mode: SchedulingMode = ctx.blackboard.get("scheduling_mode", ctx.scheduling_mode)
         used: dict[tuple[str, date], int] = {}
         draft_plan: list[dict] = []
         unscheduled: list[str] = []
@@ -124,15 +126,24 @@ class CrewMatchAgent(Agent):
             # is just enough headroom that we don't overbook by a wide margin.
             drive_budget = 20 + 15 * max(0, len(jobs) - 1)
 
+            avg_drive_km = sum(
+                haversine_km(crew.base_lat, crew.base_lng, j.lat, j.lng)
+                for crew in eligible
+                for j in jobs
+            ) / max(1, len(eligible) * len(jobs))
+
             candidates: list[tuple[float, Crew, date]] = []
             for crew in eligible:
                 fit = self._score_crew_for_cluster(crew, jobs)
+                crew_drive = sum(haversine_km(crew.base_lat, crew.base_lng, j.lat, j.lng) for j in jobs) / max(
+                    1, len(jobs)
+                )
                 for day in days:
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue
                     remaining = crew.daily_minutes - used_min
-                    score = fit + 0.005 * remaining
+                    score = fit + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
                     candidates.append((score, crew, day))
 
             if not candidates:

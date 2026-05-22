@@ -8,6 +8,7 @@ Phase B: greedy geographic clustering on verified coordinates.
 from __future__ import annotations
 
 from ..geocode import GEOCODE_CONFIRM_THRESHOLD, geocoder
+from ..scheduling_prefs import SchedulingMode, geo_cluster_target_cap
 from ..storage import store
 from ..supabase_store import persist_job_location
 from .base import Agent, AgentContext, haversine_km, week_days
@@ -106,6 +107,7 @@ class GeoClusterAgent(Agent):
             {"job_count": len(jobs), "needs_review": len(needs_review)},
         )
 
+        mode: SchedulingMode = ctx.blackboard.get("scheduling_mode", ctx.scheduling_mode)
         total_minutes = sum(j.estimated_minutes for j in jobs)
         avg_daily = (
             sum(c.daily_minutes for c in ctx.crews) / max(1, len(ctx.crews))
@@ -114,7 +116,8 @@ class GeoClusterAgent(Agent):
         by_load = max(1, int(round(total_minutes / max(1, avg_daily))))
         by_count = max(1, (len(jobs) + 2) // 3)
         max_slots = max(1, len(ctx.crews) * len(week_days(ctx.week_start)))
-        target_clusters = min(len(jobs), max_slots, max(by_load, by_count))
+        cap = geo_cluster_target_cap(mode, max_slots, len(jobs))
+        target_clusters = min(len(jobs), max(by_load, by_count, 1), cap)
         clusters: list[dict] = []
 
         if not jobs:

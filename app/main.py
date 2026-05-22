@@ -29,11 +29,16 @@ from .models import (
     RescheduleRequest,
     RescheduleResult,
 )
+from .qa_team import QATeamRunner, list_qa_reports
+from .reorganize import parse_reorganize_instruction
 from .row_import import build_import_batch, materialize_import
+from .scheduling_prefs import parse_mode
 from .seed import seed
 from .storage import store
+from .vision import ACCEPTANCE_CRITERIA, PRODUCTION_MANAGER_VISION
 from .supabase_client import supabase
 from .supabase_store import (
+    get_last_plan_id,
     hydrate_from_supabase,
     persist_job_status,
     persist_plan,
@@ -133,6 +138,26 @@ async def confirm_plan() -> PlanResult:
     return published
 
 
+@app.get("/api/preferences/scheduling")
+async def get_scheduling_preference() -> dict:
+    return {"mode": store.scheduling_mode.value}
+
+
+@app.put("/api/preferences/scheduling")
+async def set_scheduling_preference(body: dict) -> dict:
+    mode = parse_mode(body.get("mode"))
+    store.scheduling_mode = mode
+    return {"mode": mode.value}
+
+
+@app.get("/api/vision")
+async def get_vision() -> dict:
+    return {
+        "vision": PRODUCTION_MANAGER_VISION,
+        "acceptance_criteria": ACCEPTANCE_CRITERIA,
+    }
+
+
 @app.get("/api/config")
 async def get_config() -> dict:
     """Safe runtime config for the UI (no secrets)."""
@@ -162,12 +187,23 @@ async def get_config() -> dict:
 
 class PlanRequest(BaseModel):
     week_start: Optional[date] = None
+    scheduling_mode: Optional[str] = None
+
+
+class ReorganizeRequest(BaseModel):
+    instruction: str
+    week_start: Optional[date] = None
+
+
+class QARunRequest(BaseModel):
+    reset_seed: bool = True
 
 
 @app.post("/api/plan", response_model=PlanResult)
 async def plan_week(req: PlanRequest) -> PlanResult:
     supervisor = SupervisorAgent()
-    result = await supervisor.plan_week(req.week_start)
+    mode = parse_mode(req.scheduling_mode) if req.scheduling_mode else None
+    result = await supervisor.plan_week(req.week_start, scheduling_mode=mode)
     try:
         await persist_plan(result)
     except Exception:
@@ -188,7 +224,10 @@ async def plan_week_stream(req: PlanRequest) -> StreamingResponse:
     async def runner() -> None:
         try:
             supervisor = SupervisorAgent()
-            result = await supervisor.plan_week(req.week_start, emitter=emitter)
+            mode = parse_mode(req.scheduling_mode) if req.scheduling_mode else None
+            result = await supervisor.plan_week(
+                req.week_start, emitter=emitter, scheduling_mode=mode
+            )
             try:
                 await persist_plan(result)
             except Exception:
@@ -229,10 +268,16 @@ async def reschedule(req: RescheduleRequest) -> RescheduleResult:
     if not plan:
         raise HTTPException(status_code=400, detail="No plan exists yet. Run /api/plan first.")
     rescheduler = ReschedulerAgent()
-    result = await rescheduler.run_reschedule(plan, req.job_id, req.reason)
+    result = await rescheduler.run_reschedule(
+        plan,
+        req.job_id,
+        req.reason,
+        new_earliest=req.new_earliest,
+        new_latest=req.new_latest,
+    )
     try:
         await persist_job_status(req.job_id, JobStatus.RESCHEDULED)
-        await persist_reschedule_events(None, req.job_id, result.events)
+        await persist_reschedule_events(get_last_plan_id(), req.job_id, result.events)
     except Exception:
         pass
     return result
@@ -254,11 +299,16 @@ async def reschedule_stream(req: RescheduleRequest) -> StreamingResponse:
         try:
             rescheduler = ReschedulerAgent()
             result = await rescheduler.run_reschedule(
-                plan, req.job_id, req.reason, emitter=emitter
+                plan,
+                req.job_id,
+                req.reason,
+                emitter=emitter,
+                new_earliest=req.new_earliest,
+                new_latest=req.new_latest,
             )
             try:
                 await persist_job_status(req.job_id, JobStatus.RESCHEDULED)
-                await persist_reschedule_events(None, req.job_id, result.events)
+                await persist_reschedule_events(get_last_plan_id(), req.job_id, result.events)
             except Exception:
                 pass
             await queue.put({"type": "result", "data": result.model_dump(mode="json")})
@@ -328,6 +378,131 @@ async def create_job(job: Job) -> Job:
 async def reset_seed() -> dict:
     seed(reset=True)
     return {"ok": True, "jobs": len(store.list_jobs())}
+
+
+# ---------- reorganize (chat-driven) ----------
+
+
+@app.post("/api/reorganize/stream")
+async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
+    """Parse owner instruction, apply scheduling mode, replan or reschedule one job."""
+    from .agents.supervisor import _next_monday
+
+    ws = req.week_start or _next_monday()
+    intent = parse_reorganize_instruction(req.instruction, ws)
+    store.scheduling_mode = intent.scheduling_mode
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def emitter(evt: AgentEvent) -> None:
+        await queue.put({"type": "event", "data": evt.model_dump(mode="json")})
+
+    async def runner() -> None:
+        try:
+            await queue.put(
+                {
+                    "type": "event",
+                    "data": AgentEvent(
+                        agent="Reorganize",
+                        phase="intent",
+                        message=f"Mode={intent.scheduling_mode.value}"
+                        + (f", job={intent.job_id}" if intent.job_id else ", full replan"),
+                        detail={
+                            "scheduling_mode": intent.scheduling_mode.value,
+                            "job_id": intent.job_id,
+                            "target_day": intent.target_day.isoformat()
+                            if intent.target_day
+                            else None,
+                        },
+                        kind="system",
+                    ).model_dump(mode="json"),
+                }
+            )
+            if intent.job_id:
+                plan = store.get_plan()
+                if not plan:
+                    await queue.put(
+                        {
+                            "type": "error",
+                            "data": {"message": "No plan yet. Plan the week first."},
+                        }
+                    )
+                    return
+                rescheduler = ReschedulerAgent()
+                result = await rescheduler.run_reschedule(
+                    plan,
+                    intent.job_id,
+                    intent.reason,
+                    emitter=emitter,
+                    preferred_day=intent.target_day,
+                )
+                try:
+                    await persist_job_status(intent.job_id, JobStatus.RESCHEDULED)
+                    await persist_reschedule_events(
+                        get_last_plan_id(), intent.job_id, result.events
+                    )
+                except Exception:
+                    pass
+                await queue.put({"type": "result", "data": result.model_dump(mode="json")})
+            else:
+                supervisor = SupervisorAgent()
+                result = await supervisor.plan_week(
+                    ws, emitter=emitter, scheduling_mode=intent.scheduling_mode
+                )
+                try:
+                    await persist_plan(result)
+                except Exception:
+                    pass
+                await queue.put({"type": "result", "data": result.model_dump(mode="json")})
+        except Exception as exc:  # noqa: BLE001
+            await queue.put({"type": "error", "data": {"message": str(exc)}})
+        finally:
+            await queue.put(None)
+
+    async def event_gen() -> AsyncIterator[bytes]:
+        task = asyncio.create_task(runner())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n".encode()
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------- QA team ----------
+
+
+@app.post("/api/qa/run")
+async def qa_run(req: QARunRequest) -> dict:
+    """Run the QA agent team; writes JSON + Cursor handoff under reports/."""
+    runner = QATeamRunner()
+    report = await runner.run_full_suite(reset_seed=req.reset_seed)
+    return report.to_dict()
+
+
+@app.get("/api/qa/reports")
+async def qa_reports_list() -> dict:
+    return {"reports": list_qa_reports()}
+
+
+@app.get("/api/qa/reports/{run_id}")
+async def qa_report_detail(run_id: str) -> dict:
+    path = ROOT / "reports" / f"qa_{run_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Report not found")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ---------- spreadsheet import ----------
