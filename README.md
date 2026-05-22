@@ -87,11 +87,55 @@ Server-Sent Events so the UI can render the multi-agent run live.
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env   # optional: paste an OPENAI_API_KEY for LLM-authored messages
+cp .env.example .env   # optional: see "Configuration" below
 uvicorn app.main:app --reload
 ```
 
 Open <http://127.0.0.1:8000/> and click **Run agents** to plan the week.
+
+## Configuration
+
+Both integrations are optional. The product is fully functional offline.
+
+### LLM (optional)
+
+Set `OPENAI_API_KEY` to enable LLM-authored narrative review and
+personalized client messages. Otherwise deterministic templates are used.
+
+### Supabase (optional)
+
+Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to:
+
+- hydrate clients, crews, equipment, and jobs from Postgres on startup
+  (instead of the in-memory demo seed), and
+- persist every plan, crew-day, scheduled stop, drafted client message
+  (with quality scores and guardrail flags), plan review (KPIs +
+  narrative + risk score), and agent event back to the database for
+  auditing and replay.
+
+The service-role key is **server-only** — never expose it in browser
+code. RLS is enabled on every table; service-role bypasses RLS so the
+backend has full access.
+
+To create the schema in a fresh Supabase project, run
+[`sql/schema.sql`](./sql/schema.sql) followed by [`sql/seed.sql`](./sql/seed.sql)
+(or apply them as Supabase migrations).
+
+### Database schema
+
+| Table | Purpose |
+| --- | --- |
+| `clients` | End-customers (residential, commercial, HOA) |
+| `crews` | Field crews with members, skills, daily minute capacity, base location |
+| `equipment` | Inventory of capital equipment (pressure washers, lifts, ladders, rope kits, vans) |
+| `crew_equipment` | Many-to-many crew → equipment loadout |
+| `jobs` | Service jobs to plan, with required skills/equipment, time window, status |
+| `plans` | One row per produced weekly plan |
+| `crew_days` | A crew's day inside a plan, with totals and warnings |
+| `scheduled_stops` | Ordered stops within a crew-day |
+| `client_messages` | Drafted messages with critic score and guardrail flags |
+| `plan_reviews` | Structured KPIs + 0–100 risk score + narrative |
+| `agent_events` | Append-only log of every agent event for auditing/replay |
 
 ## API
 

@@ -28,6 +28,13 @@ from .models import (
 )
 from .seed import seed
 from .storage import store
+from .supabase_client import supabase
+from .supabase_store import (
+    hydrate_from_supabase,
+    persist_job_status,
+    persist_plan,
+    persist_reschedule_events,
+)
 
 app = FastAPI(title="ProductionAgent", version="0.1.0")
 
@@ -44,7 +51,19 @@ STATIC_DIR = ROOT / "static"
 
 @app.on_event("startup")
 async def _startup() -> None:
-    seed(reset=True)
+    # If Supabase is configured, hydrate from the database so the agents
+    # see real persisted data. Otherwise fall back to the in-memory seed
+    # so the demo still runs offline.
+    if supabase.enabled:
+        try:
+            info = await hydrate_from_supabase()
+            if not info.get("jobs"):
+                # Empty database: seed it from the demo dataset.
+                seed(reset=True)
+        except Exception:
+            seed(reset=True)
+    else:
+        seed(reset=True)
 
 
 # ---------- read endpoints ----------
@@ -52,7 +71,12 @@ async def _startup() -> None:
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"ok": True, "llm_enabled": llm.enabled, "model": llm.model if llm.enabled else None}
+    return {
+        "ok": True,
+        "llm_enabled": llm.enabled,
+        "model": llm.model if llm.enabled else None,
+        "supabase_enabled": supabase.enabled,
+    }
 
 
 @app.get("/api/jobs", response_model=list[Job])
@@ -91,6 +115,11 @@ class PlanRequest(BaseModel):
 async def plan_week(req: PlanRequest) -> PlanResult:
     supervisor = SupervisorAgent()
     result = await supervisor.plan_week(req.week_start)
+    try:
+        await persist_plan(result)
+    except Exception:
+        # Persistence is best-effort; in-memory plan still serves the response.
+        pass
     return result
 
 
@@ -107,6 +136,10 @@ async def plan_week_stream(req: PlanRequest) -> StreamingResponse:
         try:
             supervisor = SupervisorAgent()
             result = await supervisor.plan_week(req.week_start, emitter=emitter)
+            try:
+                await persist_plan(result)
+            except Exception:
+                pass
             await queue.put({"type": "result", "data": result.model_dump(mode="json")})
         except Exception as exc:  # noqa: BLE001
             await queue.put({"type": "error", "data": {"message": str(exc)}})
@@ -136,6 +169,11 @@ async def reschedule(req: RescheduleRequest) -> RescheduleResult:
         raise HTTPException(status_code=400, detail="No plan exists yet. Run /api/plan first.")
     rescheduler = ReschedulerAgent()
     result = await rescheduler.run_reschedule(plan, req.job_id, req.reason)
+    try:
+        await persist_job_status(req.job_id, JobStatus.RESCHEDULED)
+        await persist_reschedule_events(None, req.job_id, result.events)
+    except Exception:
+        pass
     return result
 
 
@@ -144,6 +182,10 @@ async def confirm_job(job_id: str) -> Job:
     job = store.set_job_status(job_id, JobStatus.CONFIRMED)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        await persist_job_status(job_id, JobStatus.CONFIRMED)
+    except Exception:
+        pass
     return job
 
 
@@ -152,12 +194,15 @@ async def cancel_job(job_id: str) -> Job:
     job = store.set_job_status(job_id, JobStatus.CANCELLED)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    # also drop it from the latest plan if present
     plan = store.get_plan()
     if plan:
         for cd in plan.plan.days:
             cd.stops = [s for s in cd.stops if s.job_id != job_id]
         store.set_plan(plan)
+    try:
+        await persist_job_status(job_id, JobStatus.CANCELLED)
+    except Exception:
+        pass
     return job
 
 

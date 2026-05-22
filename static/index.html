@@ -55,6 +55,10 @@
           <span class="w-2 h-2 rounded-full" :class="health.llm_enabled ? 'bg-accent-500' : 'bg-slate-500'"></span>
           <span x-text="health.llm_enabled ? `LLM: ${health.model}` : 'LLM: rule-based fallback'"></span>
         </div>
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 text-xs">
+          <span class="w-2 h-2 rounded-full" :class="health.supabase_enabled ? 'bg-accent-500' : 'bg-slate-500'"></span>
+          <span x-text="health.supabase_enabled ? 'Supabase: persisting' : 'Supabase: in-memory only'"></span>
+        </div>
         <button @click="resetDemo()" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 transition">Reset demo</button>
       </div>
     </header>
