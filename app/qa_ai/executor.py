@@ -48,6 +48,25 @@ async def execute_case(
     if reset_seed or setup.get("reset_seed", True):
         seed(reset=True)
 
+    # Allow test cases to inject custom crews before running steps.
+    for crew_data in setup.get("crews") or []:
+        try:
+            from ..models import Crew
+            c = Crew(**crew_data)
+            store.crews[c.id] = c
+        except Exception:
+            pass
+
+    # Allow test cases to inject custom jobs before running steps.
+    for job_data in setup.get("jobs") or []:
+        try:
+            from ..models import Job, JobStatus
+            j = Job(**job_data)
+            j.status = JobStatus.PENDING
+            store.jobs[j.id] = j
+        except Exception:
+            pass
+
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
 

@@ -133,6 +133,9 @@ class ReschedulerAgent(Agent):
 
                 headroom = crew.daily_minutes - used - job.estimated_minutes - 30
                 day_distance = abs((day - (original_day or day)).days)
+                # Never place the job back on the exact slot it was just removed from.
+                if day == original_day and crew.id == original_crew:
+                    continue
                 same_crew = 1 if crew.id == original_crew else 0
                 # Score: prefer (1) sooner days, (2) same crew (continuity for
                 # the client), (3) more headroom (less risk of overrun).

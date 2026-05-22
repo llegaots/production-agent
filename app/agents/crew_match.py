@@ -139,6 +139,10 @@ class CrewMatchAgent(Agent):
                     1, len(jobs)
                 )
                 for day in days:
+                    # Hard constraint: every job in this batch must be within its
+                    # client-agreed date window on this day.
+                    if any(day < j.earliest_date or day > j.latest_date for j in jobs):
+                        continue
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue
@@ -197,10 +201,20 @@ class CrewMatchAgent(Agent):
                     )
                 else:
                     unscheduled.append(j.id)
+                    # Distinguish date-window deferrals from skill/equipment gaps.
+                    date_blocked = all(
+                        all(d < j.earliest_date or d > j.latest_date for d in days)
+                        for _ in [j]
+                    )
+                    reason = (
+                        f"date window [{j.earliest_date} – {j.latest_date}] not in this week"
+                        if all(d < j.earliest_date or d > j.latest_date for d in days)
+                        else "skills/equipment/capacity"
+                    )
                     await ctx.emit(
                         self.name,
                         "warn",
-                        f"Could not place job {j.id} this week (skills/equipment/capacity).",
+                        f"Could not place job {j.id} this week ({reason}).",
                     )
 
         # Merge multiple draft entries for the same crew/day

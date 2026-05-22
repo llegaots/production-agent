@@ -25,11 +25,35 @@ Case must be executable with these step actions only:
 - reschedule (job_id, reason, optional preferred_day as YYYY-MM-DD)
 - plan_then_reschedule (plan mode, then reschedule one job)
 
+Default seed jobs available: job_001 (Île-Perrot, 90m, residential),
+job_002 (Pincourt, 150m, windows+eaves), job_003 (Pincourt, 90m),
+job_004 (Île-Perrot, 150m, windows+eaves), job_005 (Baie-D'Urfé, 240m,
+gutter, scissor_lift, June window), job_006 (Sainte-Anne-de-Bellevue, 120m).
+Default crews: crew_alpha (residential, ladder+pressure_wash),
+crew_bravo (commercial, lift_operator+glass_restoration),
+crew_charlie (high-rise, rope_access+lift_operator).
+
+For scenarios requiring custom jobs (e.g. high-rise Dorval, Pierrefonds
+residential), add a "setup" block with "jobs" and/or "crews" arrays.
+Each job must include: id, client_id, service_type (window_cleaning|
+pressure_washing|gutter_cleaning|solar_panel_cleaning|high_rise), address,
+lat, lng, estimated_minutes (int), difficulty (1-5), required_skills (list),
+required_equipment (list), earliest_date (YYYY-MM-DD), latest_date (YYYY-MM-DD).
+Skill values: rope_access, lift_operator, pressure_wash, ladder_cert, glass_restoration.
+Equipment values: pressure_washer, extension_pole, water_fed_pole, scissor_lift,
+rope_kit, ladder_28, van. Client IDs from seed: cli_001..cli_006.
+Keep custom jobs realistic: lat/lng in West Island (45.3-45.5, -74.1 to -73.7),
+dates within 2026-05-18 to 2026-06-30.
+
 JSON schema:
 {
   "fingerprint": "short_unique_slug",
   "title": "human title",
   "persona_story": "1-2 sentences as the owner/operator",
+  "setup": {
+    "jobs": [...],
+    "crews": [...]
+  },
   "steps": [{"action": "...", ...}],
   "what_good_looks_like": "how an expert would judge success"
 }"""

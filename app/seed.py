@@ -37,7 +37,8 @@ def seed(reset: bool = True) -> None:
         Equipment(id="eq_rope_1", kind=EquipmentKind.ROPE_KIT, label="Rope access kit A"),
         Equipment(id="eq_ladder_1", kind=EquipmentKind.LADDER_28, label="28ft extension ladder"),
         Equipment(id="eq_ladder_2", kind=EquipmentKind.LADDER_28, label="28ft extension ladder #2"),
-        Equipment(id="eq_ext_1", kind=EquipmentKind.EXTENSION_POLE, label="Eaves / soffit pole"),
+        Equipment(id="eq_ext_1", kind=EquipmentKind.EXTENSION_POLE, label="Eaves / soffit pole #1"),
+        Equipment(id="eq_ext_2", kind=EquipmentKind.EXTENSION_POLE, label="Eaves / soffit pole #2"),
         Equipment(id="eq_van_1", kind=EquipmentKind.VAN, label="Van Alpha"),
         Equipment(id="eq_van_2", kind=EquipmentKind.VAN, label="Van Bravo"),
         Equipment(id="eq_van_3", kind=EquipmentKind.VAN, label="Van Charlie"),
@@ -70,7 +71,7 @@ def seed(reset: bool = True) -> None:
             daily_minutes=9 * 60,
             base_lat=BASE_LAT,
             base_lng=BASE_LNG,
-            equipment_ids=["eq_pw_1", "eq_wfp_1", "eq_lift_1", "eq_ladder_2", "eq_ext_1", "eq_van_2"],
+            equipment_ids=["eq_pw_1", "eq_wfp_1", "eq_lift_1", "eq_ladder_2", "eq_ext_2", "eq_van_2"],
             hourly_cost=180.0,
         ),
         Crew(
@@ -99,10 +100,10 @@ def seed(reset: bool = True) -> None:
     for cl in clients:
         store.clients[cl.id] = cl
 
-    july_start = date(2026, 7, 1)
-    july_end = date(2026, 7, 31)
-    aug_start = date(2026, 8, 15)
-    aug_end = date(2026, 8, 31)
+    may_start = date(2026, 5, 18)
+    may_end = date(2026, 5, 29)
+    june_start = date(2026, 6, 1)
+    june_end = date(2026, 6, 30)
 
     jobs = [
         Job(
@@ -116,8 +117,8 @@ def seed(reset: bool = True) -> None:
             difficulty=2,
             required_skills=[Skill.LADDER_CERT],
             required_equipment=[EquipmentKind.LADDER_28, EquipmentKind.WATER_FED_POLE, EquipmentKind.VAN],
-            earliest_date=july_start,
-            latest_date=july_end,
+            earliest_date=may_start,
+            latest_date=may_end,
             notes="JOB-001 · Île-Perrot · Interior/Exterior Windows. Standard residential job. Unscheduled.",
         ),
         Job(
@@ -136,8 +137,8 @@ def seed(reset: bool = True) -> None:
                 EquipmentKind.EXTENSION_POLE,
                 EquipmentKind.VAN,
             ],
-            earliest_date=july_start,
-            latest_date=july_end,
+            earliest_date=may_start,
+            latest_date=may_end,
             notes="JOB-002 · Pincourt · Windows + Eaves. Needs eaves; allow buffer. Unscheduled.",
         ),
         Job(
@@ -151,8 +152,8 @@ def seed(reset: bool = True) -> None:
             difficulty=2,
             required_skills=[Skill.LADDER_CERT],
             required_equipment=[EquipmentKind.LADDER_28, EquipmentKind.WATER_FED_POLE, EquipmentKind.VAN],
-            earliest_date=july_start,
-            latest_date=july_end,
+            earliest_date=may_start,
+            latest_date=may_end,
             notes="JOB-003 · Pincourt · Same address/area as JOB-002. Unscheduled.",
         ),
         Job(
@@ -171,8 +172,8 @@ def seed(reset: bool = True) -> None:
                 EquipmentKind.EXTENSION_POLE,
                 EquipmentKind.VAN,
             ],
-            earliest_date=july_start,
-            latest_date=july_end,
+            earliest_date=may_start,
+            latest_date=may_end,
             notes="JOB-004 · Île-Perrot · Windows + Eaves. Verify preferred timing. Unscheduled.",
         ),
         Job(
@@ -192,8 +193,8 @@ def seed(reset: bool = True) -> None:
                 EquipmentKind.SCISSOR_LIFT,
                 EquipmentKind.VAN,
             ],
-            earliest_date=aug_start,
-            latest_date=aug_end,
+            earliest_date=june_start,
+            latest_date=june_end,
             notes="JOB-005 · Baie-D'Urfé · Interior/Eaves/Soft cleaning/Gutter guard. Large job; do not overpack day. Unscheduled.",
         ),
         Job(
@@ -212,8 +213,8 @@ def seed(reset: bool = True) -> None:
                 EquipmentKind.EXTENSION_POLE,
                 EquipmentKind.VAN,
             ],
-            earliest_date=july_start,
-            latest_date=july_end,
+            earliest_date=may_start,
+            latest_date=may_end,
             notes="JOB-006 · Sainte-Anne-de-Bellevue · Windows + Eaves. Group with Baie-D'Urfé / West Island jobs. Unscheduled.",
         ),
     ]
