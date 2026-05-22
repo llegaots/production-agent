@@ -883,7 +883,10 @@
             await this.loadQaReports();
           } catch (e) {
             const hint = String(e.message || e).includes('Failed to fetch')
-              ? '\n\nIs the server running? Try: ./run.sh then open http://127.0.0.1:3000'
+              ? '\n\nThe browser could not reach the API.\n'
+                + '• Local: in the project folder run ./run.sh, then open http://127.0.0.1:3000\n'
+                + '• Cursor remote/cloud: open Ports, forward port 3000, use the forwarded URL (not an old tab).\n'
+                + '• Check: curl http://127.0.0.1:3000/api/qa/ping should return {"qa":true}'
               : '';
             this.qaReport = {
               passed: false,
