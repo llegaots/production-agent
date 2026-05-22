@@ -143,6 +143,25 @@ class LLMClient:
             )
         return text
 
+    def _anthropic_payload(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict:
+        payload: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        # Newer Claude models (e.g. opus-4) reject temperature on the Messages API.
+        if not re.search(r"opus-4|claude-4-", self.model, re.I):
+            payload["temperature"] = temperature
+        return payload
+
     async def _chat_anthropic(
         self,
         system: str,
@@ -152,20 +171,22 @@ class LLMClient:
         temperature: float,
     ) -> tuple[str, dict]:
         url = f"{self.anthropic_base}/v1/messages"
-        payload = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "system": system,
-            "messages": [{"role": "user", "content": user}],
-        }
         headers = {
             "x-api-key": self.anthropic_key,
             "anthropic-version": self.anthropic_version,
             "content-type": "application/json",
         }
+        payload = self._anthropic_payload(
+            system, user, max_tokens=max_tokens, temperature=temperature
+        )
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(url, headers=headers, json=payload)
+            if r.status_code == 400 and "temperature" in (r.text or "").lower():
+                payload = self._anthropic_payload(
+                    system, user, max_tokens=max_tokens, temperature=temperature
+                )
+                payload.pop("temperature", None)
+                r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
         blocks = data.get("content") or []
