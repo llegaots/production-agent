@@ -106,7 +106,7 @@ class CursorCloudClient:
         self.auto_create_pr = _env_bool("CURSOR_AUTO_CREATE_PR", False)
         self.model = (
             os.getenv("CURSOR_HANDOFF_MODEL", "").strip()
-            or "claude-4.6-sonnet-thinking"
+            or "claude-sonnet-4-6"
         )
         self.timeout = float(os.getenv("CURSOR_API_TIMEOUT", "60"))
 
@@ -160,6 +160,17 @@ class CursorCloudClient:
                     json=body,
                     auth=self._auth(),
                 )
+                if (
+                    resp.status_code == 400
+                    and "model" in (resp.text or "").lower()
+                    and self.model
+                ):
+                    retry_body = {k: v for k, v in body.items() if k != "model"}
+                    resp = await client.post(
+                        "https://api.cursor.com/v1/agents",
+                        json=retry_body,
+                        auth=self._auth(),
+                    )
                 if resp.status_code >= 400 and resp.status_code != 404:
                     return CursorLaunchResult(
                         launched=False,

@@ -317,20 +317,80 @@ llm = LLMClient()
 
 
 def safe_json(text: str) -> Optional[dict]:
-    """Best-effort JSON extraction from an LLM response."""
+    """Best-effort JSON extraction from an LLM response.
+
+    Handles:
+    - ```json ... ``` fenced code blocks (with or without trailing fence)
+    - Preamble/postscript text around the JSON object
+    - Truncated responses (close braces missing) by balancing braces/brackets
+    """
     if not text:
         return None
     text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    # Strip optional Claude preamble before JSON
-    if "{" in text:
-        text = text[text.index("{") :]
-    if "}" in text:
-        text = text[: text.rindex("}") + 1]
-    try:
-        return json.loads(text)
-    except Exception:
+
+    fence_match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    else:
+        open_fence = re.match(r"```(?:json)?\s*", text, re.IGNORECASE)
+        if open_fence:
+            text = text[open_fence.end():]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+    if "{" not in text:
         return None
+    text = text[text.index("{"):]
+
+    last_close = text.rfind("}")
+    candidate = text[: last_close + 1] if last_close != -1 else text
+    try:
+        return json.loads(candidate)
+    except Exception:
+        pass
+
+    repaired = _repair_truncated_json(text)
+    if repaired is not None:
+        try:
+            return json.loads(repaired)
+        except Exception:
+            return None
+    return None
+
+
+def _repair_truncated_json(text: str) -> Optional[str]:
+    """Close any unclosed strings, arrays, and objects in a truncated JSON blob."""
+    in_string = False
+    escape = False
+    stack: list[str] = []
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack and ((ch == "}" and stack[-1] == "{") or (ch == "]" and stack[-1] == "[")):
+                stack.pop()
+
+    if not stack and not in_string:
+        return None
+
+    repaired = text.rstrip()
+    if repaired.endswith(","):
+        repaired = repaired[:-1]
+    if in_string:
+        repaired += '"'
+    while stack:
+        opener = stack.pop()
+        repaired += "}" if opener == "{" else "]"
+    return repaired

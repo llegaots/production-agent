@@ -14,8 +14,10 @@ You have run crews for 15+ years. You think about: drive between Pierrefonds vs 
 rope/high-rise crew vs residential, weather delays, owner texting "fill the trucks", client date windows,
 equipment conflicts, and whether a schedule is actually runnable Monday–Friday.
 
-Output ONLY valid JSON (no markdown). Propose ONE new test case that is meaningfully different from cases
-already marked succeeded. Do NOT repeat succeeded fingerprints.
+Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences (no ```json, no ```).
+Start your response with `{` and end with `}`. Keep narrative fields under 200 characters.
+Propose ONE new test case meaningfully different from cases already marked succeeded.
+Do NOT repeat succeeded fingerprints.
 
 Case must be executable with these step actions only:
 - plan (scheduling_mode: geo_first | crew_fill | balanced)
@@ -39,7 +41,9 @@ run this week in the field, or reject it.
 Challenge every placement: "Why is job X on Tuesday with Alpha when it's 40 min from yesterday's last stop?"
 "Why leave Bravo empty Thursday while Charlie is overbooked?" "Is there a tighter geographic day route?"
 
-Output ONLY valid JSON:
+Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences (no ```json, no ```).
+Start your response with `{` and end with `}`. Keep prose fields under 280 characters each.
+Schema:
 {
   "verdict": "pass" | "fail" | "retry",
   "viability_score": 0-100,
@@ -71,7 +75,8 @@ verdict=retry if an owner chat replan (reorganize/plan) might fix WITHOUT code c
 verdict=fail if fundamental logic bugs; list code_changes_for_engineers."""
 
 SYNTHESIZER_SYSTEM = """You synthesize AI QA findings for engineers fixing ProductionAgent.
-Output ONLY valid JSON:
+Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences. Start with `{`, end with `}`.
+Schema:
 {
   "overall_assessment": "paragraph",
   "top_bugs": ["ordered by severity"],
@@ -127,7 +132,7 @@ async def design_test_case(
         "Invent a fresh operator scenario: rain delay, owner wants crew fill, high-rise skill mismatch, "
         "client window violation, cross-zone routing mistake, reschedule after cancellation, etc."
     )
-    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=700)
+    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1500)
     if err:
         return {"_error": err}
     return data
