@@ -139,6 +139,10 @@ class CrewMatchAgent(Agent):
                     1, len(jobs)
                 )
                 for day in days:
+                    # Respect each job's date window: the day must fall within
+                    # every job's [earliest_date, latest_date] range.
+                    if any(day < j.earliest_date or day > j.latest_date for j in jobs):
+                        continue
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue

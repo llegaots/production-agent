@@ -31,7 +31,7 @@ from ..models import (
 )
 from ..scheduling_prefs import SchedulingMode, parse_mode
 from ..storage import store
-from .base import Agent, AgentContext, EventEmitter, llm_trace_callback
+from .base import Agent, AgentContext, EventEmitter, llm_trace_callback, week_days
 from .client_comms import ClientCommsAgent
 from .crew_match import CrewMatchAgent
 from .equipment import EquipmentAgent
@@ -65,7 +65,16 @@ class SupervisorAgent(Agent):
         scheduling_mode: Optional[SchedulingMode | str] = None,
     ) -> PlanResult:
         ws = week_start or _next_monday()
-        jobs = [j for j in store.list_jobs() if j.status.value in ("pending", "scheduled", "rescheduled")]
+        week_end = week_days(ws)[-1]   # last working day of the 5-day window
+        jobs = [
+            j for j in store.list_jobs()
+            if j.status.value in ("pending", "scheduled", "rescheduled")
+            # Only offer jobs whose date window overlaps with the planning week.
+            # A job with earliest_date > week_end is not due yet; one with
+            # latest_date < ws is already overdue (handled separately).
+            and j.earliest_date <= week_end
+            and j.latest_date >= ws
+        ]
         crews = store.list_crews()
         mode = (
             scheduling_mode

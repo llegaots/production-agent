@@ -45,6 +45,7 @@ class EquipmentKind(str, Enum):
     SCISSOR_LIFT = "scissor_lift"
     ROPE_KIT = "rope_kit"
     LADDER_28 = "ladder_28"
+    LADDER_32 = "ladder_32"   # gutter cleaning on 2-storey+; reaches higher fascia
     VAN = "van"
 
 
