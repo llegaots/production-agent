@@ -20,9 +20,9 @@ def fresh_seed():
 
 
 def test_seed_populates_store():
-    assert len(store.list_jobs()) >= 10
+    assert len(store.list_jobs()) == 6
     assert len(store.list_crews()) == 3
-    assert len(store.list_equipment()) >= 8
+    assert len(store.list_equipment()) >= 10
 
 
 def test_plan_week_assigns_most_jobs():
@@ -186,20 +186,15 @@ def test_reschedule_emits_candidate_trade_offs():
 
 
 def test_equipment_gap_flagged():
-    # Force a gap: crew Alpha lacks rope kit; assign a rope-required job to it.
+    # job_005 (gutter guard / large) requires scissor_lift; only Bravo carries it.
     jobs = store.list_jobs()
-    high_rise = [j for j in jobs if j.service_type.value == "high_rise"]
-    assert high_rise, "expected at least one high-rise job in the seed data"
+    lift_job = next((j for j in jobs if j.id == "job_005"), None)
+    assert lift_job is not None
 
     sup = SupervisorAgent()
     result = asyncio.run(sup.plan_week())
-    # No crew should be missing rope kit for the high-rise: crew Charlie has it.
-    # We assert that the agent successfully placed the high-rise job with a
-    # rope-capable crew (no equipment gap surfaced for that job).
-    rope_jobs = {j.id for j in high_rise}
     gap_jobs = set()
     for c in result.plan.conflicts:
-        for jid in rope_jobs:
-            if jid in c and "rope_kit" in c:
-                gap_jobs.add(jid)
-    assert not gap_jobs, f"Rope kit gaps found: {gap_jobs}"
+        if "job_005" in c and "scissor_lift" in c:
+            gap_jobs.add("job_005")
+    assert not gap_jobs, f"Scissor lift gaps found: {gap_jobs}"

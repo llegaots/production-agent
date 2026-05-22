@@ -1,11 +1,7 @@
-"""Sample data for a fictional window cleaning / exterior services company.
-
-The fictional company "ClearView Exterior Services" operates in the
-Austin metro area. Coordinates are real-ish, jobs are illustrative.
-"""
+"""Sample data — West Island (Montreal) window / exterior services bookings."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 from .models import (
     Client,
@@ -19,10 +15,9 @@ from .models import (
 )
 from .storage import store
 
-
-def _today_monday() -> date:
-    today = date.today()
-    return today - timedelta(days=today.weekday())
+# Sainte-Anne-de-Bellevue depot (West Island)
+BASE_LAT = 45.4030
+BASE_LNG = -73.9470
 
 
 def seed(reset: bool = True) -> None:
@@ -33,7 +28,6 @@ def seed(reset: bool = True) -> None:
         store.jobs.clear()
         store.latest_plan = None
 
-    # ---- equipment ----
     equipment = [
         Equipment(id="eq_pw_1", kind=EquipmentKind.PRESSURE_WASHER, label="Hot-water PW #1"),
         Equipment(id="eq_pw_2", kind=EquipmentKind.PRESSURE_WASHER, label="Cold-water PW #2"),
@@ -43,6 +37,7 @@ def seed(reset: bool = True) -> None:
         Equipment(id="eq_rope_1", kind=EquipmentKind.ROPE_KIT, label="Rope access kit A"),
         Equipment(id="eq_ladder_1", kind=EquipmentKind.LADDER_28, label="28ft extension ladder"),
         Equipment(id="eq_ladder_2", kind=EquipmentKind.LADDER_28, label="28ft extension ladder #2"),
+        Equipment(id="eq_ext_1", kind=EquipmentKind.EXTENSION_POLE, label="Eaves / soffit pole"),
         Equipment(id="eq_van_1", kind=EquipmentKind.VAN, label="Van Alpha"),
         Equipment(id="eq_van_2", kind=EquipmentKind.VAN, label="Van Bravo"),
         Equipment(id="eq_van_3", kind=EquipmentKind.VAN, label="Van Charlie"),
@@ -50,22 +45,21 @@ def seed(reset: bool = True) -> None:
     for e in equipment:
         store.equipment[e.id] = e
 
-    # ---- crews ----
     crews = [
         Crew(
             id="crew_alpha",
-            name="Alpha (Residential)",
+            name="Alpha (Residential — West Island)",
             members=["Marco", "Tasha"],
             skills=[Skill.LADDER_CERT, Skill.PRESSURE_WASH],
             daily_minutes=8 * 60,
-            base_lat=30.2672,
-            base_lng=-97.7431,
-            equipment_ids=["eq_pw_2", "eq_wfp_2", "eq_ladder_1", "eq_van_1"],
+            base_lat=BASE_LAT,
+            base_lng=BASE_LNG,
+            equipment_ids=["eq_pw_2", "eq_wfp_2", "eq_ladder_1", "eq_ext_1", "eq_van_1"],
             hourly_cost=110.0,
         ),
         Crew(
             id="crew_bravo",
-            name="Bravo (Commercial)",
+            name="Bravo (Commercial — West Island)",
             members=["Devin", "Pia", "Luis"],
             skills=[
                 Skill.LADDER_CERT,
@@ -74,19 +68,19 @@ def seed(reset: bool = True) -> None:
                 Skill.GLASS_RESTORATION,
             ],
             daily_minutes=9 * 60,
-            base_lat=30.2672,
-            base_lng=-97.7431,
-            equipment_ids=["eq_pw_1", "eq_wfp_1", "eq_lift_1", "eq_ladder_2", "eq_van_2"],
+            base_lat=BASE_LAT,
+            base_lng=BASE_LNG,
+            equipment_ids=["eq_pw_1", "eq_wfp_1", "eq_lift_1", "eq_ladder_2", "eq_ext_1", "eq_van_2"],
             hourly_cost=180.0,
         ),
         Crew(
             id="crew_charlie",
-            name="Charlie (High-rise)",
+            name="Charlie (High-rise — West Island)",
             members=["Sam", "Quinn"],
             skills=[Skill.ROPE_ACCESS, Skill.LIFT_OPERATOR, Skill.GLASS_RESTORATION],
             daily_minutes=8 * 60,
-            base_lat=30.2672,
-            base_lng=-97.7431,
+            base_lat=BASE_LAT,
+            base_lng=BASE_LNG,
             equipment_ids=["eq_rope_1", "eq_van_3"],
             hourly_cost=210.0,
         ),
@@ -94,155 +88,133 @@ def seed(reset: bool = True) -> None:
     for c in crews:
         store.crews[c.id] = c
 
-    # ---- clients ----
     clients = [
-        Client(id="cli_001", name="Maple Ridge HOA", contact_email="hoa@mapleridge.example", contact_phone="512-555-0101"),
-        Client(id="cli_002", name="Lake Travis Estate", contact_email="owner@laketravis.example", contact_phone="512-555-0102", preferred_contact="phone"),
-        Client(id="cli_003", name="Congress Tower LLC", contact_email="ops@congresstower.example", contact_phone="512-555-0103"),
-        Client(id="cli_004", name="Pecan Street Bistro", contact_email="manager@pecanbistro.example", contact_phone="512-555-0104"),
-        Client(id="cli_005", name="Soco Lofts", contact_email="board@socolofts.example", contact_phone="512-555-0105"),
-        Client(id="cli_006", name="The Vance Residence", contact_email="vance@example.com", contact_phone="512-555-0106"),
-        Client(id="cli_007", name="Bouldin Creek Cafe", contact_email="hello@bouldincafe.example", contact_phone="512-555-0107"),
-        Client(id="cli_008", name="Domain Northside Mgmt", contact_email="fm@domainnorth.example", contact_phone="512-555-0108"),
-        Client(id="cli_009", name="Zilker Bungalow", contact_email="zb@example.com", contact_phone="512-555-0109"),
-        Client(id="cli_010", name="Mueller Medical Plaza", contact_email="ops@muellermed.example", contact_phone="512-555-0110"),
+        Client(id="cli_001", name="Jeff Clement", contact_email="", contact_phone="514-297-4807", preferred_contact="phone", notes="JOB-001"),
+        Client(id="cli_002", name="Sherif & Isabella Zalidia", contact_email="", contact_phone="514-312-6060", preferred_contact="phone", notes="JOB-002"),
+        Client(id="cli_003", name="Claudia Schmidt", contact_email="", contact_phone="514-312-6060", preferred_contact="phone", notes="JOB-003 — same address as JOB-002"),
+        Client(id="cli_004", name="Jean Francois Fortin", contact_email="", contact_phone="514-433-4316", preferred_contact="phone", notes="JOB-004"),
+        Client(id="cli_005", name="Marilyn Spriggs", contact_email="", contact_phone="514-457-3342", preferred_contact="phone", notes="JOB-005"),
+        Client(id="cli_006", name="Helen Finn", contact_email="", contact_phone="514-266-7036", preferred_contact="phone", notes="JOB-006"),
     ]
     for cl in clients:
         store.clients[cl.id] = cl
 
-    monday = _today_monday()
-    week_end = monday + timedelta(days=4)
+    july_start = date(2026, 7, 1)
+    july_end = date(2026, 7, 31)
+    aug_start = date(2026, 8, 15)
+    aug_end = date(2026, 8, 31)
 
-    # ---- jobs ----
     jobs = [
         Job(
             id="job_001",
             client_id="cli_001",
             service_type=ServiceType.WINDOW_CLEANING,
-            address="4501 Maple Ridge Dr, Austin, TX",
-            lat=30.3527, lng=-97.7493,
-            estimated_minutes=180, difficulty=2,
+            address="18 Simone-De Beauvoir, Notre-Dame-de-l'Île-Perrot QC J7V 8P4",
+            lat=45.3838,
+            lng=-73.8825,
+            estimated_minutes=90,
+            difficulty=2,
             required_skills=[Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.WATER_FED_POLE, EquipmentKind.LADDER_28, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=620.0,
-            notes="20 townhomes, exterior only.",
+            required_equipment=[EquipmentKind.LADDER_28, EquipmentKind.WATER_FED_POLE, EquipmentKind.VAN],
+            earliest_date=july_start,
+            latest_date=july_end,
+            notes="JOB-001 · Île-Perrot · Interior/Exterior Windows. Standard residential job. Unscheduled.",
         ),
         Job(
             id="job_002",
             client_id="cli_002",
             service_type=ServiceType.WINDOW_CLEANING,
-            address="22 Vista Trail, Lakeway, TX",
-            lat=30.3711, lng=-97.9794,
-            estimated_minutes=300, difficulty=4,
-            required_skills=[Skill.LADDER_CERT, Skill.GLASS_RESTORATION],
-            required_equipment=[EquipmentKind.WATER_FED_POLE, EquipmentKind.LADDER_28, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=1850.0,
-            notes="Large lakefront home. Hard-water spotting on west elevation.",
+            address="9 Place Bastien, Pincourt QC J7W 7J2",
+            lat=45.3762,
+            lng=-73.9852,
+            estimated_minutes=150,
+            difficulty=3,
+            required_skills=[Skill.LADDER_CERT, Skill.PRESSURE_WASH],
+            required_equipment=[
+                EquipmentKind.LADDER_28,
+                EquipmentKind.WATER_FED_POLE,
+                EquipmentKind.EXTENSION_POLE,
+                EquipmentKind.VAN,
+            ],
+            earliest_date=july_start,
+            latest_date=july_end,
+            notes="JOB-002 · Pincourt · Windows + Eaves. Needs eaves; allow buffer. Unscheduled.",
         ),
         Job(
             id="job_003",
             client_id="cli_003",
-            service_type=ServiceType.HIGH_RISE,
-            address="100 Congress Ave, Austin, TX",
-            lat=30.2630, lng=-97.7434,
-            estimated_minutes=420, difficulty=5,
-            required_skills=[Skill.ROPE_ACCESS, Skill.GLASS_RESTORATION],
-            required_equipment=[EquipmentKind.ROPE_KIT, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=3400.0,
-            notes="High-rise rope descent. Building requires confirmed window 48h ahead.",
+            service_type=ServiceType.WINDOW_CLEANING,
+            address="9 Place Bastien, Pincourt QC J7W 7J2",
+            lat=45.3764,
+            lng=-73.9850,
+            estimated_minutes=90,
+            difficulty=2,
+            required_skills=[Skill.LADDER_CERT],
+            required_equipment=[EquipmentKind.LADDER_28, EquipmentKind.WATER_FED_POLE, EquipmentKind.VAN],
+            earliest_date=july_start,
+            latest_date=july_end,
+            notes="JOB-003 · Pincourt · Same address/area as JOB-002. Unscheduled.",
         ),
         Job(
             id="job_004",
             client_id="cli_004",
-            service_type=ServiceType.PRESSURE_WASHING,
-            address="421 E 6th St, Austin, TX",
-            lat=30.2670, lng=-97.7404,
-            estimated_minutes=150, difficulty=2,
-            required_skills=[Skill.PRESSURE_WASH],
-            required_equipment=[EquipmentKind.PRESSURE_WASHER, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=480.0,
-            notes="Sidewalk + patio. Must be done before 10am open.",
+            service_type=ServiceType.WINDOW_CLEANING,
+            address="23 Rue Madore, Île-Perrot QC J7V 0B1",
+            lat=45.3810,
+            lng=-73.8780,
+            estimated_minutes=150,
+            difficulty=3,
+            required_skills=[Skill.LADDER_CERT, Skill.PRESSURE_WASH],
+            required_equipment=[
+                EquipmentKind.LADDER_28,
+                EquipmentKind.WATER_FED_POLE,
+                EquipmentKind.EXTENSION_POLE,
+                EquipmentKind.VAN,
+            ],
+            earliest_date=july_start,
+            latest_date=july_end,
+            notes="JOB-004 · Île-Perrot · Windows + Eaves. Verify preferred timing. Unscheduled.",
         ),
         Job(
             id="job_005",
             client_id="cli_005",
-            service_type=ServiceType.WINDOW_CLEANING,
-            address="1500 S Congress Ave, Austin, TX",
-            lat=30.2517, lng=-97.7497,
-            estimated_minutes=240, difficulty=3,
-            required_skills=[Skill.LIFT_OPERATOR, Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.SCISSOR_LIFT, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=980.0,
-            notes="Mixed-use loft building.",
+            service_type=ServiceType.GUTTER_CLEANING,
+            address="32 Oxford, Baie-D'Urfé QC H9X 2T5",
+            lat=45.4582,
+            lng=-73.9155,
+            estimated_minutes=240,
+            difficulty=4,
+            required_skills=[Skill.LADDER_CERT, Skill.PRESSURE_WASH, Skill.LIFT_OPERATOR],
+            required_equipment=[
+                EquipmentKind.LADDER_28,
+                EquipmentKind.PRESSURE_WASHER,
+                EquipmentKind.WATER_FED_POLE,
+                EquipmentKind.SCISSOR_LIFT,
+                EquipmentKind.VAN,
+            ],
+            earliest_date=aug_start,
+            latest_date=aug_end,
+            notes="JOB-005 · Baie-D'Urfé · Interior/Eaves/Soft cleaning/Gutter guard. Large job; do not overpack day. Unscheduled.",
         ),
         Job(
             id="job_006",
             client_id="cli_006",
             service_type=ServiceType.WINDOW_CLEANING,
-            address="3007 Westlake Dr, Austin, TX",
-            lat=30.2972, lng=-97.8059,
-            estimated_minutes=120, difficulty=2,
-            required_skills=[Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.WATER_FED_POLE, EquipmentKind.LADDER_28, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=420.0,
-            notes="Repeat customer, prefers mornings.",
-        ),
-        Job(
-            id="job_007",
-            client_id="cli_007",
-            service_type=ServiceType.GUTTER_CLEANING,
-            address="1900 S 1st St, Austin, TX",
-            lat=30.2520, lng=-97.7548,
-            estimated_minutes=90, difficulty=2,
-            required_skills=[Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.LADDER_28, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=280.0,
-            notes="Quick cleanout. Cafe closed Tuesdays.",
-        ),
-        Job(
-            id="job_008",
-            client_id="cli_008",
-            service_type=ServiceType.WINDOW_CLEANING,
-            address="11801 Domain Blvd, Austin, TX",
-            lat=30.4012, lng=-97.7253,
-            estimated_minutes=360, difficulty=4,
-            required_skills=[Skill.LIFT_OPERATOR, Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.SCISSOR_LIFT, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=1640.0,
-            notes="Storefront, requires after-hours lift access.",
-        ),
-        Job(
-            id="job_009",
-            client_id="cli_009",
-            service_type=ServiceType.WINDOW_CLEANING,
-            address="2010 Bluebonnet Ln, Austin, TX",
-            lat=30.2625, lng=-97.7689,
-            estimated_minutes=90, difficulty=1,
-            required_skills=[Skill.LADDER_CERT],
-            required_equipment=[EquipmentKind.WATER_FED_POLE, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=210.0,
-        ),
-        Job(
-            id="job_010",
-            client_id="cli_010",
-            service_type=ServiceType.SOLAR_PANEL_CLEANING,
-            address="1801 East Dean Keeton, Austin, TX",
-            lat=30.2902, lng=-97.7264,
-            estimated_minutes=180, difficulty=3,
-            required_skills=[Skill.LIFT_OPERATOR],
-            required_equipment=[EquipmentKind.SCISSOR_LIFT, EquipmentKind.VAN],
-            earliest_date=monday, latest_date=week_end,
-            price=720.0,
-            notes="Medical plaza rooftop array.",
+            address="99 Meloche, Sainte-Anne-de-Bellevue QC H9X 3Z5",
+            lat=45.4035,
+            lng=-73.9478,
+            estimated_minutes=120,
+            difficulty=2,
+            required_skills=[Skill.LADDER_CERT, Skill.PRESSURE_WASH],
+            required_equipment=[
+                EquipmentKind.LADDER_28,
+                EquipmentKind.WATER_FED_POLE,
+                EquipmentKind.EXTENSION_POLE,
+                EquipmentKind.VAN,
+            ],
+            earliest_date=july_start,
+            latest_date=july_end,
+            notes="JOB-006 · Sainte-Anne-de-Bellevue · Windows + Eaves. Group with Baie-D'Urfé / West Island jobs. Unscheduled.",
         ),
     ]
     for j in jobs:

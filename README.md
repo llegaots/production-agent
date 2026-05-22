@@ -180,7 +180,8 @@ app/
   main.py                 FastAPI app + SSE stream
   models.py               Pydantic domain models (incl. PlanReview, MessageQuality)
   storage.py              In-memory store
-  seed.py                 Sample data (ClearView Exterior Services in Austin)
+  seed.py                 West Island (Montreal) booking sheet (6 jobs)
+  sql/west_island_jobs.sql  Replace Supabase jobs/clients with the sheet data
   llm.py                  Optional OpenAI-compatible client
   agents/
     base.py               AgentContext, EventEmitter, geo helpers
