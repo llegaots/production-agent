@@ -146,12 +146,43 @@ async def get_confirmed_plan() -> Optional[PlanResult]:
 
 @app.post("/api/plan/confirm", response_model=PlanResult)
 async def confirm_plan() -> PlanResult:
-    """Publish the latest draft plan to the live schedule tab."""
+    """Publish the latest draft plan as the live confirmed schedule.
+
+    Side-effects on job statuses (the only place SCHEDULED is set):
+    • Every job in the newly confirmed plan → JobStatus.SCHEDULED
+    • Jobs that were SCHEDULED from the *previous* confirmed plan but are
+      absent from the new plan → JobStatus.PENDING  (prevents ghost-status
+      when a re-plan removes or defers a previously confirmed job).
+    """
     plan = store.get_plan()
     if not plan:
         raise HTTPException(status_code=400, detail="No draft plan yet. Plan the week in chat first.")
     published = plan.model_copy(deep=True)
+
+    # Collect job IDs in the incoming confirmed plan.
+    new_confirmed_ids: set[str] = {
+        s.job_id for cd in published.plan.days for s in cd.stops
+    }
+
+    # Revert ghost-SCHEDULED jobs from previous confirmed plan.
+    old_confirmed = store.get_confirmed_plan()
+    if old_confirmed:
+        old_confirmed_ids: set[str] = {
+            s.job_id for cd in old_confirmed.plan.days for s in cd.stops
+        }
+        for job_id in old_confirmed_ids - new_confirmed_ids:
+            store.set_job_status(job_id, JobStatus.PENDING)
+
+    # Promote newly confirmed jobs → SCHEDULED.
+    for job_id in new_confirmed_ids:
+        store.set_job_status(job_id, JobStatus.SCHEDULED)
+
     store.set_confirmed_plan(published)
+
+    try:
+        await persist_plan(published)
+    except Exception:
+        pass
     return published
 
 

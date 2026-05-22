@@ -51,6 +51,7 @@ def seed(reset: bool = True) -> None:
         store.equipment.clear()
         store.jobs.clear()
         store.latest_plan = None
+        store.confirmed_plan = None
 
     # ── Equipment ─────────────────────────────────────────────────────────────
     equipment = [

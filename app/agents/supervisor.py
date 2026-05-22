@@ -181,11 +181,11 @@ class SupervisorAgent(Agent):
             review=review,
         )
 
-        # Persist & mark scheduled jobs
-        from ..models import JobStatus
-        for cd in crew_days:
-            for s in cd.stops:
-                store.set_job_status(s.job_id, JobStatus.SCHEDULED)
+        # Save draft preview — do NOT change job statuses yet.
+        # Jobs remain PENDING until the user explicitly confirms the plan
+        # via POST /api/plan/confirm.  This keeps draft and confirmed states
+        # cleanly separated: re-running the planner never silently promotes
+        # unconfirmed jobs to SCHEDULED.
         store.set_plan(result)
         await ctx.emit(self.name, "done", summary)
 
