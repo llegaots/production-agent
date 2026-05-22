@@ -27,6 +27,7 @@ def seed(reset: bool = True) -> None:
         store.equipment.clear()
         store.jobs.clear()
         store.latest_plan = None
+        store.last_plan_id = None
 
     equipment = [
         Equipment(id="eq_pw_1", kind=EquipmentKind.PRESSURE_WASHER, label="Hot-water PW #1"),

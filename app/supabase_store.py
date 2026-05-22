@@ -54,6 +54,7 @@ async def hydrate_from_supabase() -> dict:
     store.equipment.clear()
     store.jobs.clear()
     store.latest_plan = None
+    store.last_plan_id = None
 
     for c in clients:
         store.clients[c["id"]] = Client(**c)
