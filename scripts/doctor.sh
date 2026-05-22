@@ -44,7 +44,7 @@ fi
 
 echo
 echo "6. Start test (5s, no --reload)"
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" &
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" &
 PID=$!
 sleep 2
 if curl -sf "http://127.0.0.1:${PORT}/api/ping" >/dev/null; then
@@ -59,6 +59,6 @@ wait "$PID" 2>/dev/null || true
 
 echo
 echo "=== To run for real (keep terminal open) ==="
-echo "  python3 -m uvicorn app.main:app --host 127.0.0.1 --port ${PORT}"
-echo "Or without auto-reload (more stable on Windows):"
-echo "  python3 -m uvicorn app.main:app --host 127.0.0.1 --port ${PORT} --no-reload"
+echo "  ./run.sh"
+echo "Or:"
+echo "  python3 -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"

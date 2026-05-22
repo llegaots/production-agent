@@ -25,4 +25,5 @@ if [ "${RELOAD:-0}" = "1" ]; then
   EXTRA="--reload"
 fi
 
-exec python3 -m uvicorn app.main:app $EXTRA --host 127.0.0.1 --port "$PORT"
+# 0.0.0.0 so Cursor port-forwarding (e.g. local :56132 → remote :8000) works.
+exec python3 -m uvicorn app.main:app $EXTRA --host 0.0.0.0 --port "$PORT"
