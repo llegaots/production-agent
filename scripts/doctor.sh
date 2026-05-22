@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-3000}"
 echo "=== ProductionAgent doctor (port ${PORT}) ==="
 echo
 

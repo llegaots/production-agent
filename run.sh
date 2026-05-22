@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start ProductionAgent on http://127.0.0.1:8000
+# Start ProductionAgent on http://127.0.0.1:3000 (override with PORT=...)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -11,7 +11,7 @@ fi
 echo "Installing dependencies..."
 python3 -m pip install -q -r requirements.txt
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-3000}"
 echo ""
 echo "Starting server at http://127.0.0.1:${PORT}"
 echo "Open that URL in your browser and click \"Run agents\"."
@@ -25,5 +25,5 @@ if [ "${RELOAD:-0}" = "1" ]; then
   EXTRA="--reload"
 fi
 
-# 0.0.0.0 so Cursor port-forwarding (e.g. local :56132 → remote :8000) works.
+# 0.0.0.0 so Cursor port-forwarding (e.g. local port → remote :3000) works.
 exec python3 -m uvicorn app.main:app $EXTRA --host 0.0.0.0 --port "$PORT"

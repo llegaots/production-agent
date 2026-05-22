@@ -91,7 +91,7 @@ cp .env.example .env   # optional: see "Configuration" below
 uvicorn app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000/> — the UI is a **ChatGPT-style chat** with agent traces, a draft schedule in the thread, and a **Live schedule** tab for the plan you confirm. Click **API keys** in the header for where to put your OpenAI / Supabase credentials (in `.env` on the server).
+Open <http://127.0.0.1:3000/> — the UI is a **ChatGPT-style chat** with agent traces, a draft schedule in the thread, and a **Live schedule** tab for the plan you confirm. Click **API keys** in the header for where to put your OpenAI / Supabase credentials (in `.env` on the server).
 
 **Spreadsheet import:** paste tab-separated booking rows (like your Excel export) into the chat. Addresses are normalized (Canadian postal format, comma fixes) with a **confidence score**; rows below 82% show an editable field and must be confirmed before jobs are created.
 
