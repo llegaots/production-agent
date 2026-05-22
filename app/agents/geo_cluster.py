@@ -1,45 +1,111 @@
-"""GeoClusterAgent - groups jobs by geographic proximity into day buckets.
+"""GeoClusterAgent - verify addresses via Google Geocoding, then cluster by proximity.
 
 Anthropic pattern: **Workflow step (prompt-chaining input)**.
 
-This is the first step of the planning chain. It produces a deterministic,
-geometric partitioning of the job backlog so downstream agents can reason
-over coherent route-sized groups instead of N independent jobs.
+Phase A: geocode every job address (lat/lng + confidence + service-area check).
+Phase B: greedy geographic clustering on verified coordinates.
 """
 from __future__ import annotations
 
+from ..geocode import GEOCODE_CONFIRM_THRESHOLD, geocoder
+from ..storage import store
+from ..supabase_store import persist_job_location
 from .base import Agent, AgentContext, haversine_km, week_days
 
 
 class GeoClusterAgent(Agent):
-    """Greedy clustering of jobs so geographically-close jobs ride together.
-
-    The output is placed on the context blackboard as ``geo_clusters``: a list
-    of clusters, each a dict ``{"centroid": (lat, lng), "job_ids": [...]}``.
-
-    A separate agent (CrewMatchAgent) decides which crew runs each cluster
-    and which day it lands on.
-    """
+    """Geocode jobs, score address confidence, then cluster for routing."""
 
     name = "GeoClusterAgent"
 
     async def run(self, ctx: AgentContext) -> None:
         jobs = list(ctx.jobs)
         await ctx.emit_tool(
-            "geo_cluster",
+            "google_geocode",
             "invoke",
-            f"Clustering {len(jobs)} pending jobs by location (haversine farthest-first).",
-            {"job_count": len(jobs), "target_clusters": "computed"},
+            f"Verifying {len(jobs)} job addresses via Google Geocoding"
+            + ("" if geocoder.enabled else " (API key missing — using stored coordinates)."),
+            {"job_count": len(jobs), "geocoder_enabled": geocoder.enabled},
         )
         await ctx.emit(
             self.name,
             "start",
-            f"Clustering {len(jobs)} pending jobs by location.",
+            f"Geocoding and clustering {len(jobs)} jobs.",
         )
 
-        # Aim for clusters of ~2-3 jobs (a typical half-day route). Cap by both
-        # the number of jobs and the available crew-days so very small backlogs
-        # don't spawn an absurd number of solo clusters.
+        verifications: dict[str, dict] = {}
+        needs_review: list[str] = []
+
+        for job in jobs:
+            prior = (job.lat, job.lng)
+            result = await geocoder.geocode(job.address)
+
+            if result.success and result.lat is not None and result.lng is not None:
+                job.lat = result.lat
+                job.lng = result.lng
+                if result.formatted_address:
+                    job.address = result.formatted_address
+                store.jobs[job.id] = job
+                try:
+                    await persist_job_location(
+                        job.id,
+                        job.lat,
+                        job.lng,
+                        job.address,
+                        geocode_confidence=result.confidence,
+                    )
+                except Exception:
+                    pass
+            elif geocoder.enabled:
+                result.issues.append("Keeping previous coordinates from database.")
+                result.confidence = min(result.confidence, 0.45)
+                result.needs_review = True
+
+            verifications[job.id] = result.to_dict()
+            if result.needs_review:
+                needs_review.append(job.id)
+
+            phase = "verified" if result.success and not result.needs_review else "review"
+            msg = (
+                f"{job.id}: {int(result.confidence * 100)}% confidence"
+                f" — {result.formatted_address or job.address}"
+            )
+            if result.issues:
+                msg += f" ({result.issues[0]})"
+
+            await ctx.emit(
+                self.name,
+                phase,
+                msg,
+                detail={
+                    "job_id": job.id,
+                    "geocode": result.to_dict(),
+                    "prior_coords": list(prior),
+                    "coords": [job.lat, job.lng],
+                },
+                kind="data" if result.needs_review else "agent",
+            )
+
+        ctx.blackboard["geo_verifications"] = verifications
+        ctx.blackboard["geo_needs_review"] = needs_review
+
+        if needs_review:
+            await ctx.emit(
+                self.name,
+                "warning",
+                f"{len(needs_review)} job(s) below {int(GEOCODE_CONFIRM_THRESHOLD * 100)}% geocode confidence — confirm addresses before dispatch.",
+                detail={"job_ids": needs_review},
+            )
+
+        # ---- clustering (uses updated lat/lng) ----
+        jobs = list(ctx.jobs)
+        await ctx.emit_tool(
+            "geo_cluster",
+            "invoke",
+            f"Clustering {len(jobs)} jobs by verified coordinates (haversine farthest-first).",
+            {"job_count": len(jobs), "needs_review": len(needs_review)},
+        )
+
         total_minutes = sum(j.estimated_minutes for j in jobs)
         avg_daily = (
             sum(c.daily_minutes for c in ctx.crews) / max(1, len(ctx.crews))
@@ -51,14 +117,11 @@ class GeoClusterAgent(Agent):
         target_clusters = min(len(jobs), max_slots, max(by_load, by_count))
         clusters: list[dict] = []
 
-        # seed with the geographically extreme jobs
         if not jobs:
             ctx.blackboard["geo_clusters"] = []
             await ctx.emit(self.name, "done", "No jobs to cluster.")
             return
 
-        # 1. seed: pick the job furthest from the company centroid, then
-        #    repeatedly pick the job furthest from any existing seed.
         avg_lat = sum(j.lat for j in jobs) / len(jobs)
         avg_lng = sum(j.lng for j in jobs) / len(jobs)
         remaining = jobs[:]
@@ -74,13 +137,14 @@ class GeoClusterAgent(Agent):
             seeds.append(nxt)
             remaining.remove(nxt)
 
-        # 2. assign every job to its nearest seed
         buckets: list[list] = [[s] for s in seeds]
         for j in remaining:
-            best = min(range(len(seeds)), key=lambda i: haversine_km(seeds[i].lat, seeds[i].lng, j.lat, j.lng))
+            best = min(
+                range(len(seeds)),
+                key=lambda i: haversine_km(seeds[i].lat, seeds[i].lng, j.lat, j.lng),
+            )
             buckets[best].append(j)
 
-        # 3. assemble clusters
         for b in buckets:
             if not b:
                 continue
@@ -92,7 +156,8 @@ class GeoClusterAgent(Agent):
         await ctx.emit(
             self.name,
             "done",
-            f"Built {len(clusters)} geographic clusters from {len(jobs)} jobs.",
+            f"Geocoded {len(jobs)} addresses, built {len(clusters)} clusters"
+            + (f" ({len(needs_review)} need address review)." if needs_review else "."),
             detail={
                 "clusters": [
                     {
@@ -101,6 +166,7 @@ class GeoClusterAgent(Agent):
                         "centroid": list(c["centroid"]),
                     }
                     for c in clusters
-                ]
+                ],
+                "geocode_review_count": len(needs_review),
             },
         )

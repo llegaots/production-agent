@@ -10,8 +10,26 @@ from app.storage import store
 
 
 @pytest.fixture(autouse=True)
-def fresh():
+def fresh(monkeypatch):
     seed(reset=True)
+
+    async def _fake_geocode(address: str):
+        from app.geocode import GeocodeResult
+
+        return GeocodeResult(
+            input_address=address,
+            success=True,
+            lat=45.3838,
+            lng=-73.8825,
+            formatted_address=address,
+            confidence=0.92,
+            needs_review=False,
+            in_service_area=True,
+            location_type="ROOFTOP",
+            source="google",
+        )
+
+    monkeypatch.setattr("app.row_import.geocoder.geocode", _fake_geocode)
     yield
 
 

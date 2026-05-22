@@ -117,7 +117,7 @@ class ClientCommsAgent(Agent):
 
                 for iteration in range(1, MAX_ITERATIONS + 1):
                     draft = await self._draft(
-                        job, client, crew, date_str, arrival, profile, feedback
+                        ctx, job, client, crew, date_str, arrival, profile, feedback
                     )
 
                     await ctx.emit_tool(
@@ -225,6 +225,7 @@ class ClientCommsAgent(Agent):
 
     async def _draft(
         self,
+        ctx: AgentContext,
         job: Job,
         client,
         crew,

@@ -104,6 +104,14 @@ Both integrations are optional. The product is fully functional offline.
 Set `OPENAI_API_KEY` to enable LLM-authored narrative review and
 personalized client messages. Otherwise deterministic templates are used.
 
+### Google Geocoding (recommended)
+
+Set `GOOGLE_MAPS_API_KEY` and enable the **Geocoding API** in Google Cloud.
+`GeoClusterAgent` geocodes every job (e.g. `90 Devon` → full Quebec address with
+lat/lng), scores confidence (0–100%), and flags addresses outside the West Island
+service area. Scores below **82%** require user confirmation on import or show
+as review events in the agent trace when planning.
+
 ### Supabase (optional)
 
 Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to:

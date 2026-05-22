@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from .address import parse_address, refine_with_llm
+from .geocode import GEOCODE_CONFIRM_THRESHOLD, geocoder
 from .models import Client, EquipmentKind, Job, JobStatus, ServiceType, Skill
 
 PHONE_RE = re.compile(
@@ -135,7 +136,18 @@ async def build_import_batch(text: str, week_start: Optional[date] = None) -> di
         addr = parse_address(r["address_raw"])
         if addr.confidence < 0.88:
             addr = await refine_with_llm(addr)
-        if addr.needs_confirmation:
+
+        geo = await geocoder.geocode(addr.formatted or r["address_raw"])
+        addr_dict = addr.to_dict()
+        addr_dict["geocode"] = geo.to_dict()
+        if geo.success and geo.lat is not None and geo.lng is not None:
+            addr_dict["lat"] = geo.lat
+            addr_dict["lng"] = geo.lng
+            if geo.formatted_address:
+                addr_dict["formatted"] = geo.formatted_address
+        if geo.needs_review or addr.needs_confirmation:
+            any_needs_confirm = True
+        if geo.confidence < GEOCODE_CONFIRM_THRESHOLD:
             any_needs_confirm = True
 
         st, skills, equip, minutes, diff = _map_services(r.get("service_text") or "window")
@@ -143,7 +155,7 @@ async def build_import_batch(text: str, week_start: Optional[date] = None) -> di
         parsed.append(
             {
                 **r,
-                "address": addr.to_dict(),
+                "address": addr_dict,
                 "service_type": st.value,
                 "required_skills": [s.value for s in skills],
                 "required_equipment": [e.value for e in equip],
@@ -194,14 +206,21 @@ def materialize_import(
                 )
             )
 
+        geo = addr_d.get("geocode") or {}
+        lat = addr_d.get("lat") or geo.get("lat") or 45.5017
+        lng = addr_d.get("lng") or geo.get("lng") or -73.5673
+        geo_note = ""
+        if geo.get("confidence") is not None:
+            geo_note = f" [geocode {int(float(geo['confidence']) * 100)}%]"
+
         jobs.append(
             Job(
                 id=f"job_{cid}_{i}",
                 client_id=cid,
                 service_type=ServiceType(r["service_type"]),
                 address=formatted,
-                lat=addr_d.get("lat") or 45.5017,
-                lng=addr_d.get("lng") or -73.5673,
+                lat=lat,
+                lng=lng,
                 estimated_minutes=r["estimated_minutes"],
                 difficulty=r["difficulty"],
                 required_skills=[Skill(s) for s in r["required_skills"]],
@@ -210,7 +229,7 @@ def materialize_import(
                 latest_date=date.fromisoformat(r["latest_date"]),
                 price=float(r.get("price") or 0),
                 status=JobStatus.PENDING,
-                notes=r.get("notes") or "",
+                notes=(r.get("notes") or "") + geo_note,
             )
         )
 

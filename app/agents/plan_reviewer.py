@@ -137,7 +137,7 @@ class PlanReviewerAgent(Agent):
             ),
         }
 
-        narrative = await self._narrate(kpis, risk_score, top_concern, recommendation)
+        narrative = await self._narrate(ctx, kpis, risk_score, top_concern, recommendation)
 
         review = {
             "kpis": kpis,
@@ -157,7 +157,11 @@ class PlanReviewerAgent(Agent):
 
     @staticmethod
     async def _narrate(
-        kpis: dict, risk_score: int, top_concern: Optional[str], recommendation: Optional[str]
+        ctx: AgentContext,
+        kpis: dict,
+        risk_score: int,
+        top_concern: Optional[str],
+        recommendation: Optional[str],
     ) -> str:
         # Deterministic narrative fallback - always produced so the system works
         # without an LLM.

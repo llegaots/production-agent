@@ -373,6 +373,10 @@
           <span class="w-2 h-2 rounded-full" :class="config.supabase_enabled ? 'bg-accent-500' : 'bg-neutral-600'"></span>
           <span x-text="config.supabase_enabled ? 'Supabase persisting plans' : 'Supabase off — in-memory only'"></span>
         </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-2 h-2 rounded-full" :class="config.geocoding_enabled ? 'bg-accent-500' : 'bg-neutral-600'"></span>
+          <span x-text="config.geocoding_enabled ? 'Google Geocoding active (Geo agent)' : 'Geocoding off — manual lat/lng only'"></span>
+        </div>
 
         <div class="bg-surface-950 border border-surface-800 rounded-lg p-3">
           <p class="text-xs font-medium text-neutral-300 mb-2">How to connect AI (OpenAI)</p>
@@ -382,6 +386,16 @@
             <li>Set <code class="mono">OPENAI_API_KEY=sk-…</code></li>
             <li>Optional: <code class="mono">OPENAI_MODEL=gpt-4o-mini</code></li>
             <li>Restart the server: <code class="mono">python3 -m uvicorn app.main:app --reload</code></li>
+          </ol>
+        </div>
+
+        <div class="bg-surface-950 border border-surface-800 rounded-lg p-3">
+          <p class="text-xs font-medium text-neutral-300 mb-2">Google Geocoding (address verification)</p>
+          <ol class="text-xs text-neutral-400 space-y-2 list-decimal list-inside">
+            <li>Create a key in <a href="https://console.cloud.google.com/google/maps-apis" class="text-accent-500 underline" target="_blank" rel="noopener">Google Cloud Console</a></li>
+            <li>Enable <strong>Geocoding API</strong></li>
+            <li>Set <code class="mono">GOOGLE_MAPS_API_KEY=…</code> in <code class="mono">.env</code></li>
+            <li>Restart the server — Geo agent will score each address (trace panel)</li>
           </ol>
         </div>
 
@@ -650,13 +664,19 @@
           let h = '<div class="space-y-3">';
           for (const row of batch.rows) {
             const a = row.address;
+            const g = a.geocode || {};
             const idx = String(row.row_index);
             const pct = Math.round((a.confidence || 0) * 100);
-            const warn = a.needs_confirmation;
+            const geoPct = g.confidence != null ? Math.round(g.confidence * 100) : null;
+            const warn = a.needs_confirmation || g.needs_review;
             const border = warn ? 'border-amber-600/60 bg-amber-950/30' : 'border-surface-700';
             h += `<div class="p-2.5 rounded-lg border ${border}">`;
             h += `<div class="flex justify-between gap-2 mb-1"><span class="font-medium text-neutral-200">${row.name}</span>`;
-            h += `<span class="text-[10px] mono ${warn ? 'text-amber-400' : 'text-accent-500'}">${pct}% confidence${warn ? ' · confirm' : ''}</span></div>`;
+            h += `<span class="text-[10px] mono ${warn ? 'text-amber-400' : 'text-accent-500'}">`;
+            h += `fmt ${pct}%`;
+            if (geoPct != null) h += ` · geo ${geoPct}%`;
+            h += warn ? ' · confirm' : '';
+            h += `</span></div>`;
             h += `<div class="text-[10px] text-neutral-500 mb-1">Raw: ${a.raw}</div>`;
             if (warn) {
               h += `<label class="text-[10px] text-neutral-400 block mb-0.5">Corrected address</label>`;
@@ -671,6 +691,17 @@
               }
             } else {
               h += `<div class="text-xs text-neutral-300">${a.formatted}</div>`;
+            }
+            if (g.formatted_address) {
+              h += `<div class="text-[10px] text-neutral-500 mt-1">Google: ${g.formatted_address}`;
+              if (g.lat != null) h += ` · ${g.lat.toFixed(4)}, ${g.lng.toFixed(4)}`;
+              if (g.in_service_area === false) h += ' · <span class="text-amber-400">outside service area</span>';
+              h += '</div>';
+            }
+            if (g.issues?.length) {
+              h += '<ul class="text-[10px] text-amber-400/90 mt-1 list-disc ml-3">';
+              g.issues.forEach(i => { h += `<li>${i}</li>`; });
+              h += '</ul>';
             }
             h += `<div class="text-[10px] text-neutral-500 mt-1">${row.service_text || 'window'} · $${row.price || 0}</div>`;
             h += '</div>';

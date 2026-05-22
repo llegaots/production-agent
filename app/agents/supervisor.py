@@ -19,6 +19,7 @@ import asyncio
 from datetime import date, timedelta
 from typing import Optional
 
+from ..geocode import geocoder
 from ..llm import llm
 from ..supabase_client import supabase
 from ..models import (
@@ -71,10 +72,12 @@ class SupervisorAgent(Agent):
             "System",
             "config",
             f"Runtime: LLM {'enabled' if llm.enabled else 'off'} ({llm.model if llm.enabled else 'templates'}), "
+            f"Geocoding {'enabled' if geocoder.enabled else 'off'}, "
             f"Supabase {'enabled' if supabase.enabled else 'off'}.",
             detail={
                 "llm_enabled": llm.enabled,
                 "llm_model": llm.model if llm.enabled else None,
+                "geocoding_enabled": geocoder.enabled,
                 "supabase_enabled": supabase.enabled,
                 "jobs": len(jobs),
                 "crews": len(crews),

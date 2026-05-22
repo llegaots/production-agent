@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .agents import ReschedulerAgent, SupervisorAgent
+from .geocode import geocoder
 from .llm import llm
 from .models import (
     AgentEvent,
@@ -137,12 +138,14 @@ async def get_config() -> dict:
     return {
         "llm_enabled": llm.enabled,
         "llm_model": llm.model if llm.enabled else None,
+        "geocoding_enabled": geocoder.enabled,
         "supabase_enabled": supabase.enabled,
         "env_file": ".env",
         "env_vars": {
             "OPENAI_API_KEY": "Enables LLM summaries and client messages",
             "OPENAI_BASE_URL": "Optional OpenAI-compatible API base URL",
             "OPENAI_MODEL": "Model id (default gpt-4o-mini)",
+            "GOOGLE_MAPS_API_KEY": "Google Geocoding API — address → lat/lng in Geo agent",
             "SUPABASE_URL": "Optional persistence",
             "SUPABASE_SERVICE_ROLE_KEY": "Server-only; never put in the browser",
         },

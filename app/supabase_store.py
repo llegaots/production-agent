@@ -215,6 +215,29 @@ async def persist_job_status(job_id: str, status: JobStatus) -> None:
     await supabase.update("jobs", filters={"id": f"eq.{job_id}"}, patch={"status": status.value})
 
 
+async def persist_job_location(
+    job_id: str,
+    lat: float,
+    lng: float,
+    address: str,
+    *,
+    geocode_confidence: Optional[float] = None,
+) -> None:
+    """Write verified coordinates back to Supabase after GeoCluster geocoding."""
+    if not supabase.enabled:
+        return
+    notes_suffix = ""
+    if geocode_confidence is not None:
+        notes_suffix = f" [geocode {int(geocode_confidence * 100)}%]"
+    patch: dict = {"lat": lat, "lng": lng, "address": address}
+    # Append confidence hint to notes without overwriting user notes
+    job = store.get_job(job_id)
+    if job and geocode_confidence is not None:
+        base = (job.notes or "").split(" [geocode")[0].strip()
+        patch["notes"] = (base + notes_suffix).strip()
+    await supabase.update("jobs", filters={"id": f"eq.{job_id}"}, patch=patch)
+
+
 async def persist_reschedule_events(plan_id: Optional[str], job_id: str, events: list[AgentEvent]) -> None:
     if not supabase.enabled or not events:
         return
