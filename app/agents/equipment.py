@@ -50,47 +50,83 @@ class EquipmentAgent(Agent):
         gaps: list[dict] = []
 
         # daily equipment uniqueness check (same kind can't be on two crews if quantity=1)
-        # Each crew appears at most once per (day, kind) to avoid double-counting crews
-        # that own multiple items of the same kind.
         per_day_equipment: dict[date, dict[EquipmentKind, list[str]]] = defaultdict(lambda: defaultdict(list))
         for entry in draft:
             crew = crews_by_id[entry["crew_id"]]
-            seen_kinds_for_crew: set[EquipmentKind] = set()
             for eid in crew.equipment_ids:
                 e = store.get_equipment(eid)
-                if e and e.kind not in seen_kinds_for_crew:
+                if e:
                     per_day_equipment[entry["day"]][e.kind].append(crew.id)
-                    seen_kinds_for_crew.add(e.kind)
 
-        # Track which (crew_id, day) pairs must be bumped due to unresolvable conflicts
-        bumped_crew_days: set[tuple[str, date]] = set()
+        # Track which jobs must be moved to unscheduled due to equipment conflicts.
+        # We cannot silently return a schedule where a crew can't operate.
+        conflict_deferred: list[str] = []
 
         for day, kinds in per_day_equipment.items():
             for kind, crew_ids in kinds.items():
                 if len(crew_ids) > 1:
-                    # check actual stock for this kind
                     total = sum(eq.quantity for eq in store.list_equipment() if eq.kind == kind)
                     if len(crew_ids) > total:
-                        excess_count = len(crew_ids) - total
-                        # Bump the last-assigned crew-days (lowest scheduling priority)
-                        for crew_id in crew_ids[-excess_count:]:
-                            bumped_crew_days.add((crew_id, day))
-                        conflicts.append(
-                            f"On {day.isoformat()}, {len(crew_ids)} crews need {kind.value} but only {total} unit(s) exist."
+                        shortage = len(crew_ids) - total
+                        conflict_msg = (
+                            f"On {day.isoformat()}, {len(crew_ids)} crews need {kind.value} "
+                            f"but only {total} unit(s) exist — {shortage} crew(s) cannot operate."
                         )
+                        conflicts.append(conflict_msg)
                         await ctx.emit(
                             self.name,
                             "conflict",
                             f"Equipment contention on {day.isoformat()} for {kind.value} "
-                            f"({len(crew_ids)} crews need it, only {total} available) — "
-                            f"bumping {excess_count} crew-day(s) to unscheduled.",
+                            f"({len(crew_ids)} crews, {total} unit(s)). "
+                            "Deferring lowest-value jobs from conflicting crews.",
                         )
+                        # Resolve: identify which crew-day entries on this day carry
+                        # the contested equipment kind and defer jobs from the
+                        # excess crew-days (lowest-revenue first).
+                        conflicting_entries = [
+                            e for e in draft
+                            if e["day"] == day
+                            and any(
+                                store.get_equipment(eid) and store.get_equipment(eid).kind == kind
+                                for eid in crews_by_id[e["crew_id"]].equipment_ids
+                            )
+                        ]
+                        # Sort entries by total job revenue desc — keep highest-revenue
+                        # entries, defer the rest.
+                        conflicting_entries.sort(
+                            key=lambda e: -sum(
+                                (jobs_by_id.get(jid) and jobs_by_id[jid].price or 0)
+                                for jid in e["job_ids"]
+                            )
+                        )
+                        for excess_entry in conflicting_entries[total:]:
+                            for jid in excess_entry["job_ids"]:
+                                if jid not in conflict_deferred:
+                                    conflict_deferred.append(jid)
+                                    await ctx.emit(
+                                        self.name,
+                                        "defer",
+                                        f"Job {jid} deferred: {kind.value} conflict on "
+                                        f"{day.isoformat()} with crew {excess_entry['crew_id']}.",
+                                    )
+                            # Remove the deferred jobs from the draft entry.
+                            excess_entry["job_ids"] = [
+                                jid for jid in excess_entry["job_ids"]
+                                if jid not in conflict_deferred
+                            ]
+
+        # Add conflict-deferred jobs to the unscheduled list so they appear
+        # in the plan's unscheduled_job_ids rather than as ghost assignments.
+        existing_unscheduled: list[str] = ctx.blackboard.get("unscheduled", [])
+        ctx.blackboard["unscheduled"] = existing_unscheduled + conflict_deferred
 
         # per-job equipment fit
         for entry in draft:
             crew = crews_by_id[entry["crew_id"]]
             available = crew_kinds[crew.id]
             for job_id in entry["job_ids"]:
+                if job_id in conflict_deferred:
+                    continue  # already handled above
                 job = jobs_by_id[job_id]
                 missing = set(job.required_equipment) - available
                 if missing:
@@ -108,19 +144,10 @@ class EquipmentAgent(Agent):
                         f"Job {job_id} on {crew.name}/{entry['day'].isoformat()} is missing: {', '.join(m.value for m in missing)}.",
                     )
 
-        # Collect job IDs from bumped crew-days so the supervisor can move them
-        # to unscheduled_job_ids rather than returning a broken schedule.
-        bumped_jobs: list[str] = []
-        for entry in draft:
-            if (entry["crew_id"], entry["day"]) in bumped_crew_days:
-                bumped_jobs.extend(entry["job_ids"])
-
         ctx.blackboard["equipment_conflicts"] = conflicts
         ctx.blackboard["equipment_gaps"] = gaps
-        ctx.blackboard["equipment_bumped_jobs"] = bumped_jobs
         await ctx.emit(
             self.name,
             "done",
-            f"Equipment check: {len(conflicts)} day-level conflicts, {len(gaps)} per-job gaps, "
-            f"{len(bumped_jobs)} job(s) bumped to unscheduled.",
+            f"Equipment check: {len(conflicts)} day-level conflicts, {len(gaps)} per-job gaps.",
         )

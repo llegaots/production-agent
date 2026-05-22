@@ -10,6 +10,7 @@ from typing import Any, Optional
 from ..audit_log import AuditLogger
 from ..llm import llm
 from ..agents.supervisor import _next_monday
+from ..seed import SEED_WEEK_START
 from ..audit_log import REPORTS_DIR
 from ..qa_team import QAReport
 from ..vision import ACCEPTANCE_CRITERIA, PRODUCTION_MANAGER_VISION
@@ -67,7 +68,11 @@ class AIQATeamRunner:
         succeeded_history = fingerprints_for_prompt()
         case_results: list[dict[str, Any]] = []
         failed_fingerprints: list[dict] = []
-        week_start = _next_monday()
+        # Always plan against the seed data week so that date-window filters
+        # let seed jobs through.  _next_monday() returns a May date when run
+        # today, which is before all seed jobs' earliest_date (July 6), so the
+        # planner would correctly filter out every job and return an empty plan.
+        week_start = SEED_WEEK_START
         llm_errors: list[str] = []
 
         for case_idx in range(_max_cases()):

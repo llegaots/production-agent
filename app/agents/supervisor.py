@@ -41,8 +41,17 @@ from .time_budget import TimeBudgetAgent
 
 
 def _next_monday(today: Optional[date] = None) -> date:
+    """Return the Monday of the NEXT planning week.
+
+    If today is Monday, the next planning Monday is 7 days away.
+    This is used for live production planning and for the QA executor's
+    fallback when no explicit week_start is provided.
+    """
     today = today or date.today()
-    return today - timedelta(days=today.weekday())
+    days_ahead = (7 - today.weekday()) % 7  # days until Monday
+    if days_ahead == 0:
+        days_ahead = 7  # today IS Monday → plan for next week
+    return today + timedelta(days=days_ahead)
 
 
 class SupervisorAgent(Agent):

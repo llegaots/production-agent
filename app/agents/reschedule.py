@@ -136,10 +136,7 @@ class ReschedulerAgent(Agent):
                 same_crew = 1 if crew.id == original_crew else 0
                 # Score: prefer (1) sooner days, (2) same crew (continuity for
                 # the client), (3) more headroom (less risk of overrun).
-                # preferred_day gets a dominant bonus (300) so that an explicit
-                # owner directive ("move to Thursday") always wins over proximity
-                # scoring, which can only subtract at most ~20*14 = 280 pts.
-                preferred = 300 if preferred_day and day == preferred_day else 0
+                preferred = 25 if preferred_day and day == preferred_day else 0
                 score = (
                     100
                     - day_distance * 20
@@ -222,12 +219,9 @@ class ReschedulerAgent(Agent):
             detail={"new_day": new_day.isoformat(), "new_crew_id": new_crew_id},
         )
 
-        # 4) draft a client message — include the computed start_minute so the
-        #    template can state a concrete time window for the client.
+        # 4) draft a client message
         client = store.get_client(job.client_id)
-        placed_stop = next((s for s in day_record.stops if s.job_id == job.id), None)
-        start_minute = placed_stop.start_minute if placed_stop else None
-        msg = await self._draft_message(job, new_day, crew.name, reason, client, start_minute=start_minute)
+        msg = await self._draft_message(job, new_day, crew.name, reason, client)
 
         plan.client_messages[job.id] = msg
         plan.events.extend(events)
@@ -307,30 +301,14 @@ class ReschedulerAgent(Agent):
         day_record.utilization = round(min(1.0, load / max(1, crew.daily_minutes)), 2)
         day_record.overbooked = load > crew.daily_minutes
 
-    @staticmethod
-    def _format_time_window(start_minute: Optional[int], duration_minutes: int) -> str:
-        """Return a human-readable time window string like '08:30–09:45'."""
-        if start_minute is None:
-            return "during business hours"
-        start_h = start_minute // 60
-        start_m = start_minute % 60
-        end_minute = start_minute + duration_minutes
-        end_h = end_minute // 60
-        end_m = end_minute % 60
-        return f"{start_h:02d}:{start_m:02d}–{end_h:02d}:{end_m:02d}"
-
-    async def _draft_message(
-        self, job, new_day, crew_name, reason, client, *, start_minute: Optional[int] = None
-    ) -> str:
+    async def _draft_message(self, job, new_day, crew_name, reason, client) -> str:
         date_str = new_day.strftime("%A, %b %d")
-        time_window = self._format_time_window(start_minute, job.estimated_minutes)
         template = (
             f"Hi {client.name if client else 'there'},\n\n"
             f"We need to reschedule your {job.service_type.value.replace('_', ' ')} "
-            f"at {job.address}. "
+            f"at {job.address} originally planned for this week. "
             f"Reason: {reason}.\n\n"
-            f"We've reassigned the job to {crew_name} on {date_str} "
-            f"(estimated window: {time_window}). "
+            f"We've reassigned the job to {crew_name} on {date_str}. "
             "Please reply YES to confirm, or let us know a time that works better.\n\n"
             "Thanks for your flexibility,\nClearView"
         )
@@ -341,8 +319,7 @@ class ReschedulerAgent(Agent):
             "You write brief reschedule messages for ClearView Exterior Services. "
             "Every message MUST: (1) apologize once - briefly, (2) state the reason in one "
             "short clause, (3) state the NEW date exactly as given, (4) state the new crew, "
-            "(5) include the service address, (6) include the estimated time window, "
-            "(7) ask the client to confirm or to propose a different time. "
+            "(5) ask the client to confirm or to propose a different time. "
             "Do NOT promise refunds, discounts, or new pricing. Do NOT speculate about future weather. "
             "Two short paragraphs. Return the message only - no preamble."
         )
@@ -351,8 +328,7 @@ class ReschedulerAgent(Agent):
             "Hi Maple Ridge HOA,\n\n"
             "Apologies for the change - our Tuesday slot is no longer viable due to a high "
             "wind advisory and we'd rather reschedule than work around safety constraints. "
-            "We've moved your window cleaning at 200 Boul. Beaconsfield to Thursday, May 21 "
-            "with our Alpha crew (estimated window: 08:00–14:00).\n\n"
+            "We've moved your window cleaning to Thursday, May 21 with our Alpha crew.\n\n"
             "Please reply YES to confirm Thursday, or let us know a time later in the week "
             "that works better. Thanks for your flexibility, ClearView."
         )
@@ -361,11 +337,10 @@ class ReschedulerAgent(Agent):
             + "\n\nNow draft a message with these facts:\n"
             + f"- Client: {client.name if client else 'unknown'}\n"
             + f"- Service: {job.service_type.value.replace('_', ' ')}\n"
-            + f"- Address: {job.address}\n"
             + f"- Reason: {reason}\n"
             + f"- New date: {date_str}\n"
-            + f"- Estimated window: {time_window}\n"
             + f"- New crew: {crew_name}\n"
+            + f"- Address: {job.address}\n"
             + "Return the message only."
         )
         text = await llm.chat(system, user, max_tokens=260, temperature=0.4)

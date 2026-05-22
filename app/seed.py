@@ -30,6 +30,10 @@ from .storage import store
 BASE_LAT = 45.4030
 BASE_LNG = -73.9470
 
+# The Monday the seed data was designed around.  The QA executor always
+# plans against this week so that date-window filters let seed jobs through.
+SEED_WEEK_START = date(2026, 7, 6)
+
 
 # ─── Neighbourhood centroids (lat, lng) ──────────────────────────────────────
 _ILE_PERROT      = (45.3820, -73.9380)   # ~8 km S of depot
