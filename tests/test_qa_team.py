@@ -46,7 +46,7 @@ def fresh_seed(monkeypatch):
 
 def test_qa_suite_produces_report():
     runner = QATeamRunner()
-    report = asyncio.run(runner.run_full_suite(reset_seed=True))
+    report = asyncio.run(runner.run_full_suite(reset_seed=True, mode="legacy"))
     assert report.overall_score >= 0
     assert len(report.criteria) >= 4
     assert report.report_json_path

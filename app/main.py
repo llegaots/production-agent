@@ -211,6 +211,7 @@ class ReorganizeRequest(BaseModel):
 class QARunRequest(BaseModel):
     reset_seed: bool = True
     auto_cursor_handoff: Optional[bool] = None
+    mode: str = "ai"  # ai | legacy
 
 
 @app.post("/api/plan", response_model=PlanResult)
@@ -500,11 +501,20 @@ async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
 
 @app.post("/api/qa/run")
 async def qa_run(req: QARunRequest) -> dict:
-    """Run the QA agent team; writes JSON + Cursor handoff under reports/."""
+    """Run QA: AI operator loop (default) or legacy rule-based suite."""
+    mode = (req.mode or "ai").strip().lower()
+    if mode not in ("ai", "legacy"):
+        raise HTTPException(status_code=400, detail="mode must be 'ai' or 'legacy'")
+    if mode == "ai" and not llm.enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="AI QA requires ANTHROPIC_API_KEY or OPENAI_API_KEY. Use mode=legacy without LLM.",
+        )
     runner = QATeamRunner()
     report = await runner.run_full_suite(
         reset_seed=req.reset_seed,
         auto_cursor_handoff=req.auto_cursor_handoff,
+        mode=mode,
     )
     return report.to_dict()
 

@@ -82,9 +82,28 @@ class QATeamRunner:
         *,
         reset_seed: bool = True,
         auto_cursor_handoff: Optional[bool] = None,
+        mode: str = "ai",
+    ) -> QAReport:
+        """Run QA: ``ai`` = operator LLM loop (default); ``legacy`` = rule-based scenarios."""
+        if mode == "legacy":
+            return await self._run_legacy_suite(
+                reset_seed=reset_seed,
+                auto_cursor_handoff=auto_cursor_handoff,
+            )
+        from .qa_ai.runner import AIQATeamRunner
+
+        return await AIQATeamRunner(audit=self.audit).run(
+            auto_cursor_handoff=auto_cursor_handoff,
+        )
+
+    async def _run_legacy_suite(
+        self,
+        *,
+        reset_seed: bool = True,
+        auto_cursor_handoff: Optional[bool] = None,
     ) -> QAReport:
         started = datetime.now(timezone.utc).isoformat()
-        self.audit.log("QATeam", "start", "Starting full QA suite against production-manager vision.")
+        self.audit.log("QATeam", "start", "Starting legacy rule-based QA suite.")
         scenarios: list[dict[str, Any]] = []
         db_checks: list[dict[str, Any]] = []
         modes_tested: list[str] = []
@@ -141,7 +160,7 @@ class QATeamRunner:
             recommendations=recommendations,
             audit_path=str(REPORTS_DIR / f"audit_{self.audit.run_id}.jsonl"),
         )
-        report.report_json_path = str(self._write_json_report(report))
+        report.report_json_path = str(self._write_json_report(report, mode="legacy"))
         handoff_path = self._write_cursor_handoff(report)
         report.cursor_handoff_path = str(handoff_path)
 
@@ -375,10 +394,12 @@ class QATeamRunner:
             recs.append("All weighted criteria passed. Monitor live owner chat reorganize flows.")
         return recs
 
-    def _write_json_report(self, report: QAReport) -> Path:
+    def _write_json_report(self, report: QAReport, *, mode: str = "ai") -> Path:
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         path = REPORTS_DIR / f"qa_{report.run_id}.json"
-        path.write_text(json.dumps(report.to_dict(), indent=2, default=str), encoding="utf-8")
+        payload = report.to_dict()
+        payload["mode"] = mode
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
 
     def _write_cursor_handoff(self, report: QAReport) -> Path:

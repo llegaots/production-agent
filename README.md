@@ -177,6 +177,20 @@ To create the schema in a fresh Supabase project, run
 | `POST` | `/api/reorganize/stream` | Chat-driven replan or single-job reschedule (SSE) |
 | `PUT` | `/api/preferences/scheduling` | `geo_first` \| `crew_fill` \| `balanced` |
 
+### AI QA (default)
+
+`POST /api/qa/run` with `{ "mode": "ai" }` (default) runs a **reflective operator loop**:
+
+1. **Case Designer** (LLM) invents a fresh real-world scenario (won’t repeat cases in `reports/qa_succeeded_cases.json`).
+2. **Executor** runs the real agents (`plan`, `reorganize`, `reschedule`, …).
+3. **Schedule Critic** (LLM) reviews the week like a West Island ops manager — “why job X on Tuesday?”, viability, better routing.
+4. On **retry**, applies critic-suggested owner chat (reorganize / replan) and re-reviews.
+5. **Synthesizer** aggregates bugs and concrete tasks for Cursor.
+
+Requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Use `{ "mode": "legacy" }` for the older rule-based suite (no LLM).
+
+Env: `QA_MAX_CASES` (default 5), `QA_MAX_ITERATIONS` (default 2 per case).
+
 ### Automatic Cursor handoff after QA
 
 When `CURSOR_API_KEY` is set (Cloud Agents key from the Cursor dashboard), each `POST /api/qa/run`:
