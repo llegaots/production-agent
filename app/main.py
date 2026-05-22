@@ -20,12 +20,15 @@ from .models import (
     Client,
     Crew,
     Equipment,
+    ImportConfirmRequest,
+    ImportParseRequest,
     Job,
     JobStatus,
     PlanResult,
     RescheduleRequest,
     RescheduleResult,
 )
+from .row_import import build_import_batch, materialize_import
 from .seed import seed
 from .storage import store
 from .supabase_client import supabase
@@ -249,6 +252,35 @@ async def create_job(job: Job) -> Job:
 async def reset_seed() -> dict:
     seed(reset=True)
     return {"ok": True, "jobs": len(store.list_jobs())}
+
+
+# ---------- spreadsheet import ----------
+
+
+@app.post("/api/import/parse")
+async def import_parse(req: ImportParseRequest) -> dict:
+    """Parse pasted spreadsheet rows; normalize addresses with confidence scores."""
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Paste is empty.")
+    return await build_import_batch(req.text)
+
+
+@app.post("/api/import/confirm")
+async def import_confirm(req: ImportConfirmRequest) -> dict:
+    """After user confirms ambiguous addresses, load clients and jobs into the store."""
+    if not req.rows:
+        raise HTTPException(status_code=400, detail="No rows to import.")
+    clients, jobs = materialize_import(req.rows, address_overrides=req.address_overrides)
+    for c in clients:
+        store.clients[c.id] = c
+    for j in jobs:
+        store.upsert_job(j)
+    return {
+        "ok": True,
+        "clients": len(clients),
+        "jobs": len(jobs),
+        "job_ids": [j.id for j in jobs],
+    }
 
 
 # ---------- static UI ----------

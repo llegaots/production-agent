@@ -169,3 +169,15 @@ class RescheduleResult(BaseModel):
     new_crew_id: Optional[str] = None
     client_message: str = ""
     events: list[AgentEvent] = Field(default_factory=list)
+
+
+class ImportParseRequest(BaseModel):
+    text: str
+
+
+class ImportConfirmRequest(BaseModel):
+    rows: list[dict]
+    address_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map row_index (string) -> user-confirmed formatted address",
+    )

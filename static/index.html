@@ -69,6 +69,7 @@
               <button @click="sendPrompt('Plan this week')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Plan this week</button>
               <button @click="sendPrompt('Show draft schedule')" class="px-3 py-2 rounded-lg border border-surface-700 hover:bg-surface-800">Show draft schedule</button>
             </div>
+            <p class="text-xs text-neutral-500 mt-4">Or paste rows from your booking spreadsheet (tab-separated) into the box below.</p>
           </div>
         </template>
 
@@ -117,6 +118,11 @@
                     <div class="bg-surface-900 border border-surface-800 rounded-lg p-3 text-sm" x-html="msg.scheduleHtml"></div>
                   </template>
 
+                  <!-- Import review (address confidence) -->
+                  <template x-if="msg.importHtml">
+                    <div class="bg-surface-900 border border-surface-800 rounded-lg p-3 text-sm" x-html="msg.importHtml"></div>
+                  </template>
+
                   <!-- Actions -->
                   <template x-if="msg.actions && msg.actions.length">
                     <div class="flex flex-wrap gap-2 pt-1">
@@ -152,7 +158,7 @@
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M3 11l18-7-7 18-2-8-9-3z"/></svg>
           </button>
         </form>
-        <p class="text-[10px] text-neutral-500 mt-2 text-center">Try: Plan this week · Confirm schedule to live tab · Reschedule job_003 rain</p>
+        <p class="text-[10px] text-neutral-500 mt-2 text-center">Paste spreadsheet rows · Plan this week · Publish to live schedule</p>
       </div>
     </div>
 
@@ -233,6 +239,8 @@
         clients: [],
         config: { llm_enabled: false, supabase_enabled: false },
         showSettings: false,
+        pendingImport: null,
+        importOverrides: {},
         _msgId: 0,
 
         async init() {
@@ -270,6 +278,7 @@
             traces: opts.traces || [],
             streaming: !!opts.streaming,
             scheduleHtml: opts.scheduleHtml || null,
+            importHtml: opts.importHtml || null,
             actions: opts.actions || [],
           };
           this.messages.push(m);
@@ -295,10 +304,24 @@
           this.sendPrompt(t);
         },
 
+        isSpreadsheetPaste(text) {
+          const lines = text.trim().split(/\n/).filter(l => l.trim());
+          if (lines.length < 2) return false;
+          const hasTabs = lines.some(l => l.includes('\t'));
+          const hasPhone = lines.some(l => /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(l));
+          const hasPostal = lines.some(l => /[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d/i.test(l));
+          return (hasTabs && hasPhone) || (lines.length >= 3 && hasPostal && hasPhone);
+        },
+
         async sendPrompt(text) {
           const lower = text.toLowerCase();
           this.pushUser(text);
 
+          if (this.isSpreadsheetPaste(text) || /^import\b/i.test(lower)) {
+            const paste = /^import\b/i.test(lower) ? text.replace(/^import\s*/i, '').trim() || text : text;
+            await this.runImportParse(paste);
+            return;
+          }
           if (/^plan|schedule.*week|run agents/i.test(lower)) {
             await this.runPlanWeek();
             return;
@@ -326,9 +349,127 @@
           }
 
           this.pushAssistant(
-            'I can help you:\n• **Plan this week** — runs all agents with live traces\n• **Confirm schedule** / **Publish to live schedule** — copies the draft to the Live schedule tab\n• **Reschedule job_003 due to rain** — replans one job\n• **Show draft schedule**',
-            { actions: [{ id: 'plan', label: 'Plan this week', primary: true }, { id: 'show', label: 'Show draft' }] }
+            'I can help you:\n• **Paste spreadsheet rows** (tab-separated from Excel)\n• **Plan this week** — agents + traces\n• **Publish to live schedule** — after you confirm the draft\n• **Reschedule job_003 due to rain**',
+            { actions: [{ id: 'plan', label: 'Plan this week', primary: true }] }
           );
+        },
+
+        async runImportParse(text) {
+          if (this.running) return;
+          this.running = true;
+          this.importOverrides = {};
+          try {
+            const r = await fetch('/api/import/parse', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text }),
+            });
+            const batch = await r.json();
+            if (!r.ok) throw new Error(batch.detail || 'Parse failed');
+            this.pendingImport = batch;
+
+            let intro = `Parsed **${batch.total}** row(s) from your spreadsheet.`;
+            if (batch.needs_confirmation) {
+              intro += '\n\nSome addresses need your confirmation (confidence below 82%). Review each flagged row, edit if needed, then click **Confirm import**.';
+            } else {
+              intro += '\n\nAll addresses look good. Click **Confirm import** to add them as jobs.';
+            }
+
+            const actions = [{ id: 'import_confirm', label: 'Confirm import', primary: true }];
+            if (batch.needs_confirmation) {
+              actions.unshift({ id: 'import_skip_ok', label: 'Use suggestions as-is', primary: false });
+            }
+
+            this.pushAssistant(intro, {
+              importHtml: this.buildImportReviewHtml(batch),
+              actions,
+            });
+          } catch (e) {
+            this.pushAssistant('Import failed: ' + e.message);
+          } finally {
+            this.running = false;
+            this.scrollChat();
+          }
+        },
+
+        buildImportReviewHtml(batch) {
+          if (!batch?.rows?.length) return '<p class="text-neutral-500">No rows detected. Copy tab-separated rows from Excel.</p>';
+          let h = '<div class="space-y-3">';
+          for (const row of batch.rows) {
+            const a = row.address;
+            const idx = String(row.row_index);
+            const pct = Math.round((a.confidence || 0) * 100);
+            const warn = a.needs_confirmation;
+            const border = warn ? 'border-amber-600/60 bg-amber-950/30' : 'border-surface-700';
+            h += `<div class="p-2.5 rounded-lg border ${border}">`;
+            h += `<div class="flex justify-between gap-2 mb-1"><span class="font-medium text-neutral-200">${row.name}</span>`;
+            h += `<span class="text-[10px] mono ${warn ? 'text-amber-400' : 'text-accent-500'}">${pct}% confidence${warn ? ' · confirm' : ''}</span></div>`;
+            h += `<div class="text-[10px] text-neutral-500 mb-1">Raw: ${a.raw}</div>`;
+            if (warn) {
+              h += `<label class="text-[10px] text-neutral-400 block mb-0.5">Corrected address</label>`;
+              h += `<input type="text" data-row-idx="${idx}" class="import-addr-input w-full bg-surface-950 border border-surface-700 rounded px-2 py-1 text-xs text-neutral-100" value="${(this.importOverrides[idx] || a.formatted).replace(/"/g, '&quot;')}" />`;
+              if (a.issues?.length) {
+                h += '<ul class="text-[10px] text-amber-400/90 mt-1 list-disc ml-3">';
+                a.issues.forEach(i => { h += `<li>${i}</li>`; });
+                h += '</ul>';
+              }
+              if (a.suggestions?.length) {
+                h += `<p class="text-[10px] text-neutral-500 mt-1">Suggestion: ${a.suggestions[0]}</p>`;
+              }
+            } else {
+              h += `<div class="text-xs text-neutral-300">${a.formatted}</div>`;
+            }
+            h += `<div class="text-[10px] text-neutral-500 mt-1">${row.service_text || 'window'} · $${row.price || 0}</div>`;
+            h += '</div>';
+          }
+          h += '</div>';
+          return h;
+        },
+
+        collectImportOverrides() {
+          const inputs = document.querySelectorAll('.import-addr-input');
+          const overrides = { ...this.importOverrides };
+          inputs.forEach(inp => {
+            const idx = inp.getAttribute('data-row-idx');
+            if (idx && inp.value.trim()) overrides[idx] = inp.value.trim();
+          });
+          return overrides;
+        },
+
+        async confirmImport() {
+          if (!this.pendingImport?.rows?.length) return;
+          this.running = true;
+          try {
+            const overrides = this.collectImportOverrides();
+            const r = await fetch('/api/import/confirm', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ rows: this.pendingImport.rows, address_overrides: overrides }),
+            });
+            const out = await r.json();
+            if (!r.ok) throw new Error(out.detail || 'Confirm failed');
+            this.pendingImport = null;
+            this.importOverrides = {};
+            await this.refreshJobs();
+            this.pushAssistant(
+              `Imported **${out.jobs}** job(s) for **${out.clients}** client(s). Say **Plan this week** to run the agents on this backlog.`,
+              { actions: [{ id: 'plan', label: 'Plan this week', primary: true }] }
+            );
+          } catch (e) {
+            this.pushAssistant('Could not import: ' + e.message);
+          } finally {
+            this.running = false;
+          }
+        },
+
+        async runAction(act) {
+          if (act.id === 'import_confirm') await this.confirmImport();
+          else if (act.id === 'import_skip_ok') await this.confirmImport();
+          else if (act.id === 'plan') await this.runPlanWeek();
+          else if (act.id === 'publish') await this.publishPlan();
+          else if (act.id === 'show' && this.draftPlan) {
+            this.pushAssistant('Draft schedule:', { scheduleHtml: this.buildScheduleTable(this.draftPlan), actions: this.draftActions() });
+          }
         },
 
         draftActions() {
@@ -337,14 +478,6 @@
             { id: 'publish', label: 'Publish to live schedule', primary: true },
             { id: 'show', label: 'Refresh preview' },
           ];
-        },
-
-        async runAction(act) {
-          if (act.id === 'plan') await this.runPlanWeek();
-          else if (act.id === 'publish') await this.publishPlan();
-          else if (act.id === 'show' && this.draftPlan) {
-            this.pushAssistant('Draft schedule:', { scheduleHtml: this.buildScheduleTable(this.draftPlan), actions: this.draftActions() });
-          }
         },
 
         async runPlanWeek() {
