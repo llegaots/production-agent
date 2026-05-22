@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
-from dotenv import load_dotenv
+from .env_load import load_project_env
 
-load_dotenv()
+load_project_env()
 
 # West Island / greater Montreal west — where this demo business operates
 SERVICE_CENTROID_LAT = float(os.getenv("SERVICE_AREA_LAT", "45.4030"))

@@ -10,9 +10,9 @@ import os
 from typing import Any, Optional
 
 import httpx
-from dotenv import load_dotenv
+from .env_load import load_project_env
 
-load_dotenv()
+load_project_env()
 
 
 class SupabaseClient:

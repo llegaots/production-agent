@@ -16,9 +16,10 @@ from typing import Awaitable, Callable, Optional
 TraceFn = Callable[[str, str, dict], Awaitable[None]]
 
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+from .env_load import ENV_LOADED, ENV_PATH, load_project_env
+
+load_project_env()
 
 # OpenAI model aliases that commonly cause HTTP 400 (invalid / unreleased ids).
 _OPENAI_MODEL_ALIASES = {
@@ -67,10 +68,18 @@ class LLMClient:
             self.provider = "none"
 
         if self.provider == "anthropic":
-            self.model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+            raw = (os.getenv("ANTHROPIC_MODEL") or "").strip()
+            self.model = raw or "claude-sonnet-4-20250514"
+            if not raw:
+                self.model_source = "default"
+            elif ENV_PATH.exists():
+                self.model_source = "env_file"
+            else:
+                self.model_source = "environment"
         else:
-            raw = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            raw = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
             self.model = _OPENAI_MODEL_ALIASES.get(raw.lower(), raw)
+            self.model_source = "default"
 
     @property
     def enabled(self) -> bool:

@@ -29,6 +29,7 @@ from .models import (
     RescheduleRequest,
     RescheduleResult,
 )
+from .env_load import ENV_PATH
 from .cursor_client import cursor_cloud
 from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .qa_jobs import job_status_payload, start_background_qa
@@ -96,6 +97,8 @@ async def health() -> dict:
         "llm_enabled": llm.enabled,
         "llm_provider": llm.provider if llm.enabled else None,
         "model": llm.model if llm.enabled else None,
+        "model_source": getattr(llm, "model_source", None) if llm.enabled else None,
+        "env_file": str(ENV_PATH) if ENV_PATH.exists() else None,
         "supabase_enabled": supabase.enabled,
         "cursor_handoff_enabled": cursor_cloud.enabled,
         "qa_api": True,
@@ -178,6 +181,8 @@ async def get_config() -> dict:
         "llm_provider": llm.provider if llm.enabled else None,
         "llm_provider_label": llm.provider_label if llm.enabled else None,
         "llm_model": llm.model if llm.enabled else None,
+        "llm_model_source": getattr(llm, "model_source", None) if llm.enabled else None,
+        "env_file_path": str(ENV_PATH) if ENV_PATH.exists() else None,
         "geocoding_enabled": geocoder.enabled,
         "supabase_enabled": supabase.enabled,
         "cursor_handoff_enabled": cursor_cloud.enabled,
