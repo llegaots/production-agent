@@ -250,17 +250,33 @@ class CursorCloudClient:
 
 
 def build_handoff_prompt(handoff_markdown: str, *, run_id: str, passed: bool, score: int) -> str:
-    """Compose the cloud-agent task from the QA markdown report."""
+    """Compose the cloud-agent task from the QA markdown report.
+
+    IMPORTANT: the markdown already contains a clear task section at the top.
+    This preamble reinforces that the agent must NOT invent work from the vision.
+    """
     status = "PASS" if passed else "NEEDS WORK"
+    has_findings = "NO actionable findings" not in handoff_markdown
+
+    if not has_findings:
+        instruction = (
+            "The QA run did NOT produce actionable findings (0 cases ran or all passed).\n"
+            "DO NOT implement new features or refactor anything.\n"
+            "Your only task: run `python3 -m pytest tests/ -q` and confirm everything passes.\n"
+            "Reply with the test output.\n"
+        )
+    else:
+        instruction = (
+            "Read the 'YOUR TASK' section at the top of the report below.\n"
+            "Implement ONLY the specific fixes listed there — nothing more.\n"
+            "The 'Context only — app vision' section at the bottom is background; do NOT build from it.\n"
+            "Run `python3 -m pytest tests/ -q` before finishing.\n"
+        )
+
     return (
-        "You are the coding agent for ProductionAgent (multi-agent production scheduler).\n"
-        f"QA run `{run_id}` finished with score {score}/100 ({status}).\n\n"
-        "Implement the recommended fixes in this repository. Requirements:\n"
-        "- Minimize scope; fix root causes from the QA evidence.\n"
-        "- Preserve existing conventions and tests.\n"
-        "- Run `python3 -m pytest tests/ -q` before finishing.\n"
-        "- Focus on schedule dynamics, rescheduling, DB persistence, and scheduling preferences "
-        "(geo_first vs crew_fill).\n\n"
+        f"You are the coding agent for ProductionAgent (repo: production-agent).\n"
+        f"QA run `{run_id}` — score {score}/100 ({status}).\n\n"
+        f"{instruction}\n"
         "---\n\n"
         f"{handoff_markdown.strip()}\n"
     )

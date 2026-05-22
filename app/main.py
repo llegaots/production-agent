@@ -34,6 +34,11 @@ from .cursor_client import cursor_cloud
 from .cursor_handoff import attach_handoff_to_report_json, trigger_automatic_handoff
 from .qa_jobs import job_status_payload, start_background_qa
 from .qa_team import QATeamRunner, list_qa_reports
+from .qa_ai.registry import (
+    load_succeeded_cases,
+    REGISTRY_PATH,
+    fingerprints_for_prompt,
+)
 from .reorganize import parse_reorganize_instruction
 from .row_import import build_import_batch, materialize_import
 from .scheduling_prefs import parse_mode
@@ -590,6 +595,34 @@ async def qa_run(req: QARunRequest) -> dict:
 async def qa_run_status(run_id: str) -> dict:
     """Poll a background QA job (or load a finished report from disk)."""
     return job_status_payload(run_id)
+
+
+@app.get("/api/qa/registry")
+async def qa_registry() -> dict:
+    """Return the succeeded-case registry so the UI can show variety coverage."""
+    from .qa_ai.llm_agents import _category_coverage
+    cases = load_succeeded_cases()
+    fps   = [c.get("fingerprint", "") for c in cases]
+    coverage = _category_coverage(fps, [])
+    category_names = {
+        "A": "geo_routing",    "B": "crew_fill",   "C": "equipment_conflict",
+        "D": "skill_gap",      "E": "date_window",  "F": "rain_reschedule",
+        "G": "multi_crew_balance", "H": "revenue_priority",
+    }
+    return {
+        "total": len(cases),
+        "cases": cases[-20:],
+        "coverage": {f"{k}:{category_names[k]}": v for k, v in coverage.items()},
+        "registry_path": str(REGISTRY_PATH),
+    }
+
+
+@app.delete("/api/qa/registry")
+async def qa_registry_clear() -> dict:
+    """Clear the succeeded-case registry so the next AI QA run explores fresh scenarios."""
+    if REGISTRY_PATH.exists():
+        REGISTRY_PATH.unlink()
+    return {"cleared": True, "message": "Registry cleared. Next AI QA run will explore all categories from scratch."}
 
 
 @app.post("/api/qa/handoff/{run_id}")

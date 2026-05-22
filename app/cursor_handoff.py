@@ -52,6 +52,20 @@ async def trigger_automatic_handoff(
         )
 
     markdown = handoff_path.read_text(encoding="utf-8")
+
+    # Block launch when QA produced no cases at all — the handoff has nothing
+    # concrete for the Cursor agent to fix.  Without this guard, the agent
+    # reads the Vision section and builds new features instead of fixing bugs.
+    if not force and "Actionable findings:** NO" in markdown:
+        return CursorLaunchResult(
+            launched=False,
+            skipped_reason=(
+                "QA produced no actionable findings (0 cases ran or all passed). "
+                "Cursor agent not launched — nothing concrete to fix. "
+                "Check Anthropic credits or re-run QA after the LLM issue is resolved."
+            ),
+        )
+
     prompt = build_handoff_prompt(
         markdown, run_id=run_id, passed=passed, score=overall_score
     )

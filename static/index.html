@@ -383,6 +383,24 @@
           Then hard-refresh this page (Ctrl+Shift+R).
         </div>
         <p class="text-[10px] text-neutral-500 w-full" x-show="qaRunning && qaProgressMessage" x-text="qaProgressMessage"></p>
+
+        <!-- Registry / coverage row -->
+        <template x-if="qaRegistry.total >= 0">
+          <div class="w-full flex flex-wrap items-center gap-2 text-[10px]">
+            <span class="text-neutral-500">
+              Scenarios passed: <strong x-text="qaRegistry.total"></strong>
+              <span x-show="qaRegistry.total > 0" class="ml-1 text-neutral-400">
+                · <span x-text="Object.entries(qaRegistry.coverage || {}).filter(([,v])=>v>0).map(([k])=>k.split(':')[1]).join(', ')"></span> covered
+              </span>
+            </span>
+            <button @click="clearRegistry()" :disabled="qaRunning || qaRegistry.total === 0"
+                    class="text-[10px] px-2 py-0.5 rounded border border-surface-700 hover:bg-surface-800 disabled:opacity-40"
+                    title="Clear the succeeded-case registry so the next run explores completely fresh scenario categories">
+              Clear registry
+            </button>
+          </div>
+        </template>
+
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">
             QA on <span x-text="config.llm_model"></span>
@@ -451,6 +469,17 @@
               </template>
             </ul>
             <div class="mt-3 text-xs text-neutral-500 space-y-2">
+              <div class="mb-2 p-2 rounded bg-surface-900 border border-surface-700 text-neutral-400 text-[10px] leading-relaxed">
+                <strong class="text-neutral-300 block mb-1">How the QA loop works</strong>
+                Each run designs up to <strong x-text="$store ? $store.qaMaxCases : 'a few'">a few</strong> novel scenarios,
+                executes them against real scheduling agents, and critiques the results.
+                Cases that <em>pass</em> are saved to the registry so they're never repeated.
+                If issues are found, a <strong>Cursor Cloud Agent is auto-launched once</strong>
+                to fix the code — it does NOT re-run QA automatically.
+                After it pushes, come back here and click <strong>Run AI QA suite</strong>
+                again to verify the fix.
+                To explore completely fresh scenarios, click <strong>Clear registry</strong> above.
+              </div>
               <p class="font-medium text-neutral-300">Cursor cloud agent</p>
               <template x-if="qaReport.cursor_handoff?.launched">
                 <div class="rounded border border-accent-500/30 bg-accent-500/5 p-2">
@@ -580,12 +609,14 @@
         qaProgressMessage: '',
         qaReport: null,
         qaReportsList: [],
+        qaRegistry: { total: -1, coverage: {}, cases: [] },
         _msgId: 0,
         _traceKey: 0,
 
         async init() {
           this.apiOrigin = window.location.origin;
           await this.checkQaApi();
+          this.loadRegistry().catch(() => {});
           const [j, c, cl, draft, confirmed, cfg, pref] = await Promise.all([
             fetch('/api/jobs').then(r => r.json()),
             fetch('/api/crews').then(r => r.json()),
@@ -945,6 +976,7 @@
             this.qaReport = data;
             this.qaProgressMessage = '';
             await this.loadQaReports();
+            await this.loadRegistry();
           } catch (e) {
             const origin = window.location.origin || 'this page';
             const hint = String(e.message || e).includes('Failed to fetch')
@@ -974,6 +1006,19 @@
           } catch (_) {
             this.qaReportsList = [];
           }
+        },
+
+        async loadRegistry() {
+          try {
+            const r = await fetch('/api/qa/registry');
+            if (r.ok) this.qaRegistry = await r.json();
+          } catch (_) {}
+        },
+
+        async clearRegistry() {
+          if (!confirm('Clear the QA scenario registry? The next run will design entirely new scenarios across all 8 categories.')) return;
+          await fetch('/api/qa/registry', { method: 'DELETE' });
+          await this.loadRegistry();
         },
 
         async loadQaReport(runId) {

@@ -16,18 +16,32 @@ equipment conflicts, and whether a schedule is actually runnable Monday–Friday
 
 Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences (no ```json, no ```).
 Start your response with `{` and end with `}`. Keep narrative fields under 200 characters.
-Propose ONE new test case meaningfully different from cases already marked succeeded.
-Do NOT repeat succeeded fingerprints.
+
+CRITICAL VARIETY RULE: Each run must test a DIFFERENT scheduling concern.
+The 8 distinct concern categories are:
+  A) geo_routing — drive efficiency, neighborhood clustering, cross-zone routing mistakes
+  B) crew_fill — utilization, packing idle days, "fill the trucks Monday"
+  C) equipment_conflict — ladder shortage, only one lift, rope kit availability
+  D) skill_gap — rope-access cert, lift operator, glass restoration specialist
+  E) date_window — client away, preferred day, tight booking window
+  F) rain_reschedule — weather day off, moving a full crew-day
+  G) multi_crew_balance — one crew overloaded while another is idle
+  H) revenue_priority — high-value job deferred, urgent job bumped
+
+You will be told which categories are already well-tested. Pick a DIFFERENT one.
+The fingerprint MUST include the category letter, e.g. "A_dorval_cross_zone" or "E_july4_window".
+Do NOT pick a category that already has 2+ succeeded cases.
 
 Case must be executable with these step actions only:
-- plan (scheduling_mode: geo_first | crew_fill | balanced)
+- plan (scheduling_mode: geo_first | crew_fill | balanced | revenue_priority)
 - reorganize (instruction: natural language owner chat)
 - reschedule (job_id, reason, optional preferred_day as YYYY-MM-DD)
 - plan_then_reschedule (plan mode, then reschedule one job)
 
 JSON schema:
 {
-  "fingerprint": "short_unique_slug",
+  "fingerprint": "CATEGORY_LETTER_short_slug",
+  "category": "A|B|C|D|E|F|G|H",
   "title": "human title",
   "persona_story": "1-2 sentences as the owner/operator",
   "steps": [{"action": "...", ...}],
@@ -117,20 +131,44 @@ async def _chat_json(
     return data, None
 
 
+def _category_coverage(succeeded_fingerprints: list[str], failed_this_run: list[dict]) -> dict[str, int]:
+    """Count how many times each A-H category has appeared in succeeded + failed cases."""
+    counts: dict[str, int] = {c: 0 for c in "ABCDEFGH"}
+    for fp in succeeded_fingerprints:
+        letter = fp[0].upper() if fp and fp[0].upper() in counts else None
+        if letter:
+            counts[letter] += 1
+    for rec in failed_this_run:
+        fp = rec.get("fingerprint", "")
+        letter = fp[0].upper() if fp and fp[0].upper() in counts else None
+        if letter:
+            counts[letter] += 1
+    return counts
+
+
 async def design_test_case(
     *,
     succeeded_fingerprints: list[str],
     failed_this_run: list[dict],
     case_index: int,
 ) -> Optional[dict]:
+    coverage = _category_coverage(succeeded_fingerprints, failed_this_run)
+    # Least-covered categories first (alphabetical tiebreak).
+    by_coverage = sorted(coverage.items(), key=lambda kv: (kv[1], kv[0]))
+    least_covered = [k for k, v in by_coverage[:3]]
+    saturated    = [k for k, v in coverage.items() if v >= 2]
+
     user = (
         f"{PRODUCTION_MANAGER_VISION}\n\n"
         f"Case index in this run: {case_index + 1}\n"
-        f"Already succeeded (DO NOT repeat): {json.dumps(succeeded_fingerprints)}\n"
-        f"Failed or retried this run (avoid unless new angle): "
+        f"Already succeeded (DO NOT repeat these fingerprints): {json.dumps(succeeded_fingerprints)}\n"
+        f"Failed or retried this run: "
         f"{json.dumps([f.get('fingerprint') for f in failed_this_run])}\n\n"
-        "Invent a fresh operator scenario: rain delay, owner wants crew fill, high-rise skill mismatch, "
-        "client window violation, cross-zone routing mistake, reschedule after cancellation, etc."
+        f"Category coverage so far: {json.dumps(coverage)}\n"
+        f"Saturated categories (2+ cases already — AVOID these): {saturated}\n"
+        f"Least-tested categories — PICK ONE OF THESE: {least_covered}\n\n"
+        "Design a scenario for one of the least-tested categories. "
+        "The fingerprint MUST start with the category letter (e.g. 'B_busy_monday')."
     )
     data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1500)
     if err:

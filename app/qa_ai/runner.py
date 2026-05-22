@@ -332,47 +332,138 @@ class AIQATeamRunner:
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
 
+    def _has_actionable_findings(self, cases: list[dict], synthesizer: dict) -> bool:
+        """Return True only if there are concrete bugs/tasks the Cursor agent can act on."""
+        if not cases:
+            return False
+        failed = [c for c in cases if not c.get("passed")]
+        if not failed:
+            return False
+        has_code_changes = any(
+            c.get("final_critique", {}).get("code_changes_for_engineers")
+            for c in failed
+        )
+        has_bugs = bool(synthesizer.get("top_bugs") or synthesizer.get("recommended_cursor_tasks"))
+        return has_code_changes or has_bugs
+
     def _write_handoff(
         self, report: QAReport, cases: list[dict], synthesizer: dict
     ) -> Path:
         path = REPORTS_DIR / f"cursor-handoff_{report.run_id}.md"
+        passed_cases = sum(1 for c in cases if c.get("passed"))
+        failed_cases = [c for c in cases if not c.get("passed")]
+        actionable = self._has_actionable_findings(cases, synthesizer)
+
         lines = [
             "# ProductionAgent AI QA handoff",
             "",
             f"- **Run ID:** `{report.run_id}`",
-            f"- **Mode:** AI operator review (reflective loop)",
             f"- **Score:** {report.overall_score}/100 ({'PASS' if report.passed else 'NEEDS WORK'})",
-            f"- **Cases passed:** {sum(1 for c in cases if c.get('passed'))}/{len(cases)}",
-            "",
-            "## Executive synthesis (for Cursor engineering)",
-            "",
-            synthesizer.get("overall_assessment") or "_No synthesizer output._",
-            "",
-            "## Top bugs to fix",
+            f"- **Cases:** {passed_cases} passed, {len(failed_cases)} failed",
+            f"- **Actionable findings:** {'YES' if actionable else 'NO — see note below'}",
             "",
         ]
-        for bug in synthesizer.get("top_bugs") or []:
-            lines.append(f"- {bug}")
-        lines.extend(["", "## Recommended implementation tasks", ""])
-        for task in synthesizer.get("recommended_cursor_tasks") or report.recommendations:
-            lines.append(f"1. {task}")
-        lines.extend(["", "## Per-case operator critiques", ""])
-        for c in cases:
-            lines.append(f"### {c.get('title')} (`{c.get('fingerprint')}`) — {'PASS' if c.get('passed') else 'FAIL'}")
-            crit = c.get("final_critique") or {}
-            lines.append(f"\n{crit.get('executive_summary', '')}\n")
-            for pc in crit.get("placement_critiques") or []:
-                lines.append(
-                    f"- **{pc.get('severity', '?').upper()}** `{pc.get('job_id')}` on {pc.get('scheduled_day')} "
-                    f"({pc.get('crew_id')}): {pc.get('question')}"
-                )
-                if pc.get("better_alternative"):
-                    lines.append(f"  - Better: {pc['better_alternative']}")
-            if crit.get("optimization_notes"):
-                lines.append(f"\n_Optimization:_ {crit['optimization_notes']}")
-            for code in crit.get("code_changes_for_engineers") or []:
-                lines.append(f"- **Code fix:** {code}")
-            lines.append("")
-        lines.extend(["", "## Vision", "", PRODUCTION_MANAGER_VISION, ""])
+
+        if not actionable:
+            lines += [
+                "## ⚠️ No actionable findings — DO NOT implement new features",
+                "",
+                "The AI QA run did not produce concrete code-change requests.",
+                "This is usually because:",
+                "- The LLM ran out of credits before completing any cases, OR",
+                "- All tested cases passed (nothing to fix), OR",
+                "- QA was aborted by the probe check.",
+                "",
+                "**Do NOT use the Vision section below as a task list.**",
+                "**Only implement changes when there are specific `code_changes_for_engineers` entries below.**",
+                "",
+                "If there is nothing to fix: reply with a short summary confirming the schedule",
+                "is operationally sound and run `python3 -m pytest tests/ -q` to confirm.",
+                "",
+            ]
+            if report.error_message:
+                lines += [
+                    f"**Error that stopped QA:** {report.error_message}",
+                    "",
+                    "Fix the error first (usually: top up Anthropic credits, then restart ./run.sh).",
+                    "",
+                ]
+        else:
+            # ── ACTIONABLE: put concrete tasks up front, unambiguous ─────────
+            all_code_changes: list[str] = []
+            for c in failed_cases:
+                crit = c.get("final_critique") or {}
+                for change in crit.get("code_changes_for_engineers") or []:
+                    all_code_changes.append(f"[{c.get('fingerprint')}] {change}")
+
+            lines += [
+                "## YOUR TASK — implement only these specific fixes",
+                "",
+                "> Fix the root causes identified by the operator critique below.",
+                "> Do NOT add new features. Preserve existing conventions and tests.",
+                "> Run `python3 -m pytest tests/ -q` before finishing.",
+                "",
+                "### Concrete code changes requested by the operator critique",
+                "",
+            ]
+            if all_code_changes:
+                for change in all_code_changes:
+                    lines.append(f"- {change}")
+            else:
+                lines.append("_(Operator critiques contain placement issues but no explicit code changes — see per-case details below.)_")
+
+            lines += [
+                "",
+                "### Synthesizer recommendations",
+                "",
+            ]
+            for task in synthesizer.get("recommended_cursor_tasks") or []:
+                lines.append(f"- {task}")
+            for bug in synthesizer.get("top_bugs") or []:
+                lines.append(f"- Bug: {bug}")
+
+            lines += ["", "---", "", "## Per-case operator critiques (evidence)", ""]
+            for c in cases:
+                verdict = "✅ PASS" if c.get("passed") else "❌ FAIL"
+                lines.append(f"### {verdict} — {c.get('title')} (`{c.get('fingerprint')}`)")
+                crit = c.get("final_critique") or {}
+                if crit.get("executive_summary"):
+                    lines.append(f"\n**Operator verdict:** {crit['executive_summary']}\n")
+                for pc in crit.get("placement_critiques") or []:
+                    sev = pc.get("severity", "?").upper()
+                    lines.append(
+                        f"- **{sev}** `{pc.get('job_id')}` on {pc.get('scheduled_day')} "
+                        f"({pc.get('crew_id')}): _{pc.get('question')}_"
+                    )
+                    if pc.get("better_alternative"):
+                        lines.append(f"  - **Better:** {pc['better_alternative']}")
+                if crit.get("optimization_notes"):
+                    lines.append(f"\n_Optimization note:_ {crit['optimization_notes']}")
+                for change in crit.get("code_changes_for_engineers") or []:
+                    lines.append(f"- **CODE CHANGE NEEDED:** {change}")
+                if c.get("iterations"):
+                    last_iter = c["iterations"][-1]
+                    retry = (last_iter.get("critique") or {}).get("owner_retry")
+                    if retry:
+                        lines.append(
+                            f"\n_Operator would retry:_ {retry.get('action')} — "
+                            f"{retry.get('instruction_or_mode')}"
+                        )
+                lines.append("")
+
+        # Vision goes at the very end, clearly labelled as CONTEXT ONLY
+        lines += [
+            "---",
+            "",
+            "## Context only — app vision (do not use as a task list)",
+            "",
+            "> This section describes what the app should do in production.",
+            "> It is provided as context, NOT as a list of features to implement.",
+            "> Your task is defined entirely in the sections above.",
+            "",
+            PRODUCTION_MANAGER_VISION.strip(),
+            "",
+        ]
+
         path.write_text("\n".join(lines), encoding="utf-8")
         return path
