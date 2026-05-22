@@ -59,6 +59,7 @@ class AIQATeamRunner:
         case_results: list[dict[str, Any]] = []
         failed_fingerprints: list[dict] = []
         week_start = _next_monday()
+        llm_errors: list[str] = []
 
         for case_idx in range(_max_cases()):
             case = await design_test_case(
@@ -66,6 +67,10 @@ class AIQATeamRunner:
                 failed_this_run=failed_fingerprints,
                 case_index=case_idx,
             )
+            if case and case.get("_error"):
+                llm_errors.append(str(case["_error"]))
+                self.audit.log("CaseDesigner", "error", case["_error"], level="warning")
+                break
             if not case or not case.get("fingerprint"):
                 self.audit.log("CaseDesigner", "fail", "Could not design case; stopping loop.")
                 break
@@ -176,6 +181,11 @@ class AIQATeamRunner:
         passed = passed_cases == len(case_results) and len(case_results) > 0
 
         recommendations: list[str] = []
+        if llm_errors:
+            recommendations.insert(
+                0,
+                f"LLM blocked AI QA: {llm_errors[0]} — fix billing/model, or use Legacy QA (no LLM).",
+            )
         if synthesizer.get("recommended_cursor_tasks"):
             recommendations.extend(synthesizer["recommended_cursor_tasks"])
         for c in case_results:
@@ -204,7 +214,9 @@ class AIQATeamRunner:
             recommendations=recommendations[:25] or ["AI QA completed — review case critiques in report."],
             audit_path=str(REPORTS_DIR / f"audit_{self.audit.run_id}.jsonl"),
         )
-        report.report_json_path = str(self._write_json_report(report, case_results, synthesizer))
+        report.report_json_path = str(
+            self._write_json_report(report, case_results, synthesizer, llm_errors=llm_errors)
+        )
         handoff_path = self._write_handoff(report, case_results, synthesizer)
         report.cursor_handoff_path = str(handoff_path)
 
@@ -227,7 +239,12 @@ class AIQATeamRunner:
         return report
 
     def _write_json_report(
-        self, report: QAReport, cases: list[dict], synthesizer: dict
+        self,
+        report: QAReport,
+        cases: list[dict],
+        synthesizer: dict,
+        *,
+        llm_errors: Optional[list[str]] = None,
     ) -> Path:
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         path = REPORTS_DIR / f"qa_{report.run_id}.json"
@@ -236,6 +253,9 @@ class AIQATeamRunner:
         payload["ai_cases"] = cases
         payload["synthesizer"] = synthesizer
         payload["succeeded_registry_count"] = len(load_succeeded_cases())
+        if llm_errors:
+            payload["error_message"] = llm_errors[0]
+            payload["llm_errors"] = llm_errors
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return path
 

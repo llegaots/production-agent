@@ -80,11 +80,29 @@ Output ONLY valid JSON:
 }"""
 
 
-async def _chat_json(system: str, user: str, *, max_tokens: int = 2000) -> Optional[dict]:
+def _llm_failure_message(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return "LLM returned empty response."
+    if text.startswith("[LLM fallback after error:"):
+        return text.removeprefix("[LLM fallback after error:").rstrip("]").strip()
+    return None
+
+
+async def _chat_json(
+    system: str, user: str, *, max_tokens: int = 2000
+) -> tuple[Optional[dict], Optional[str]]:
+    """Returns (parsed_json, error_message)."""
     if not llm.enabled:
-        return None
+        return None, "LLM not configured (add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env)."
     text = await llm.chat(system, user, max_tokens=max_tokens, temperature=0.35)
-    return safe_json(text or "")
+    err = _llm_failure_message(text)
+    if err:
+        return None, err
+    data = safe_json(text or "")
+    if not data:
+        preview = (text or "")[:240]
+        return None, f"LLM response was not valid JSON. Preview: {preview}"
+    return data, None
 
 
 async def design_test_case(
@@ -102,7 +120,10 @@ async def design_test_case(
         "Invent a fresh operator scenario: rain delay, owner wants crew fill, high-rise skill mismatch, "
         "client window violation, cross-zone routing mistake, reschedule after cancellation, etc."
     )
-    return await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1200)
+    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1200)
+    if err:
+        return {"_error": err}
+    return data
 
 
 async def critique_schedule(
@@ -119,7 +140,10 @@ async def critique_schedule(
     )
     if prior_critique:
         user += f"\nPrior critique (you may soften if replan fixed issues):\n{json.dumps(prior_critique, default=str)}\n"
-    return await _chat_json(CRITIC_SYSTEM, user, max_tokens=2500)
+    data, err = await _chat_json(CRITIC_SYSTEM, user, max_tokens=2500)
+    if err:
+        return {"_error": err, "verdict": "fail", "viability_score": 0, "executive_summary": err}
+    return data
 
 
 async def synthesize_run(
@@ -128,4 +152,7 @@ async def synthesize_run(
     vision: str = PRODUCTION_MANAGER_VISION,
 ) -> Optional[dict]:
     user = f"Vision:\n{vision}\n\nCase results:\n{json.dumps(cases, default=str, indent=2)}"
-    return await _chat_json(SYNTHESIZER_SYSTEM, user, max_tokens=2000)
+    data, err = await _chat_json(SYNTHESIZER_SYSTEM, user, max_tokens=2000)
+    if err:
+        return {"overall_assessment": err, "top_bugs": [err], "recommended_cursor_tasks": []}
+    return data

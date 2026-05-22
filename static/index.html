@@ -403,6 +403,14 @@
             <p class="text-xs text-neutral-400 mono" x-show="qaReport.run_id && qaReport.run_id !== 'failed'" x-text="'Run ' + qaReport.run_id"></p>
             <div x-show="qaReport.error_message" class="mt-2 p-2 rounded border border-red-500/40 bg-red-950/30 text-sm text-red-200 whitespace-pre-wrap" x-text="qaReport.error_message"></div>
             <p class="text-[10px] text-neutral-500 mt-1" x-show="qaReport.mode === 'ai' && !qaReport.error_message">Mode: AI operator loop</p>
+            <template x-if="qaReport.recommendations?.length && (!qaReport.ai_cases?.length && !qaReport.scenarios?.length)">
+              <div class="mt-3 text-sm text-amber-200/90">
+                <p class="font-medium text-amber-300 mb-1">What happened</p>
+                <template x-for="(rec, ri) in qaReport.recommendations" :key="ri">
+                  <p class="text-xs mt-1" x-text="rec"></p>
+                </template>
+              </div>
+            </template>
             <template x-if="qaReport.synthesizer?.overall_assessment">
               <div class="mt-3 text-sm text-neutral-300 whitespace-pre-wrap" x-text="qaReport.synthesizer.overall_assessment"></div>
             </template>
