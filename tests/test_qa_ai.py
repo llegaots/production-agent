@@ -16,7 +16,7 @@ def test_ai_qa_reflective_loop(monkeypatch):
         "what_good_looks_like": "Jobs regrouped by zone",
     }
     case_b = {
-        "fingerprint": "fill_trucks_thursday",
+        "fingerprint": "test_fill_trucks_unique",
         "title": "Fill trucks",
         "persona_story": "Slow Monday",
         "steps": [{"action": "reorganize", "instruction": "fill crew days"}],
@@ -76,7 +76,7 @@ def test_ai_qa_reflective_loop(monkeypatch):
         )
 
     monkeypatch.setattr("app.agents.geo_cluster.geocoder.geocode", _fake_geocode)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-for-qa")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     design_cases = [case_a, case_b]
     critique_iter = iter(critiques)
