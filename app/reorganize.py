@@ -38,11 +38,23 @@ def _parse_day_token(token: str, week_start: date) -> Optional[date]:
     return week_start.fromordinal(week_start.toordinal() + idx) if idx < 5 else None
 
 
+_EMERGENCY_RE = re.compile(
+    r"\b(urgent|today|emergency|flood|asap)\b|water\s+damage",
+    re.I,
+)
+
+
 def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeIntent:
     """Extract scheduling preference and optional single-job move from natural language."""
     lower = text.lower()
-    mode = SchedulingMode.GEO_FIRST
-    if "fill" in lower and "crew" in lower:
+
+    # Emergency keywords take highest priority: override mode to CREW_FILL and
+    # target the earliest available slot (week_start = Monday of current week).
+    is_emergency = bool(_EMERGENCY_RE.search(lower))
+
+    if is_emergency:
+        mode = SchedulingMode.CREW_FILL
+    elif "fill" in lower and "crew" in lower:
         mode = SchedulingMode.CREW_FILL
     elif re.search(r"minimize\s*drive|geo\s*first|location\s*first|proximity", lower):
         mode = SchedulingMode.GEO_FIRST
@@ -52,16 +64,22 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         m = _MODE_RE.search(lower)
         if m:
             mode = parse_mode(m.group(1))
+        else:
+            mode = SchedulingMode.GEO_FIRST
 
     job_id = None
     jm = _JOB_RE.search(text)
     if jm:
         job_id = jm.group(1).lower().replace("job-", "job_")
 
-    target_day = None
-    dm = _DAY_RE.search(lower)
-    if dm:
-        target_day = _parse_day_token(dm.group(1), week_start)
+    target_day: Optional[date] = None
+    if is_emergency:
+        # Force the job to the earliest slot in the current week
+        target_day = week_start
+    else:
+        dm = _DAY_RE.search(lower)
+        if dm:
+            target_day = _parse_day_token(dm.group(1), week_start)
 
     reason = text.strip()[:500] or "Owner requested schedule change via chat"
     return ReorganizeIntent(

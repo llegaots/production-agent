@@ -213,6 +213,23 @@ class CrewMatchAgent(Agent):
             key = (entry["crew_id"], entry["day"])
             merged.setdefault(key, []).extend(entry["job_ids"])
 
+        # Safety invariant: every job in ctx.jobs must appear in either the
+        # draft plan or the unscheduled list.  Jobs that are silently dropped
+        # (e.g. due to an exception in placement logic) are caught here and
+        # added to unscheduled so the caller can always account for them.
+        placed_ids: set[str] = {jid for jids in merged.values() for jid in jids}
+        unscheduled_set: set[str] = set(unscheduled)
+        for job in ctx.jobs:
+            if job.id not in placed_ids and job.id not in unscheduled_set:
+                unscheduled.append(job.id)
+                unscheduled_set.add(job.id)
+                await ctx.emit(
+                    self.name,
+                    "warn",
+                    f"Job {job.id} was not placed or deferred — adding to unscheduled "
+                    f"(required skills: {[s.value for s in job.required_skills]}).",
+                )
+
         ctx.blackboard["draft_plan"] = [
             {"crew_id": k[0], "day": k[1], "job_ids": v} for k, v in merged.items()
         ]

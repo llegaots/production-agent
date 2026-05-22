@@ -72,6 +72,10 @@ class SupervisorAgent(Agent):
             # Only offer jobs whose date window overlaps with the planning week.
             # A job with earliest_date > week_end is not due yet; one with
             # latest_date < ws is already overdue (handled separately).
+            # Guard against None dates (should not happen with valid data but
+            # defensive handling prevents silent inclusion of undated jobs).
+            and j.earliest_date is not None
+            and j.latest_date is not None
             and j.earliest_date <= week_end
             and j.latest_date >= ws
         ]
@@ -128,6 +132,11 @@ class SupervisorAgent(Agent):
             "Running Equipment and TimeBudget validators in parallel.",
         )
         await asyncio.gather(self.equipment.run(ctx), self.budget.run(ctx))
+
+        # Post Phase 2: evict jobs that EquipmentAgent flagged as unresolvable
+        # equipment conflicts from crew_days so no crew is asked to operate
+        # without its required equipment.
+        await self._evict_equipment_conflicts(ctx)
 
         # Phase 3 - comms pipeline (router -> draft -> guardrail || critic -> redraft).
         await self.comms.run(ctx)
@@ -190,6 +199,41 @@ class SupervisorAgent(Agent):
         await ctx.emit(self.name, "done", summary)
 
         return result
+
+    async def _evict_equipment_conflicts(self, ctx: AgentContext) -> None:
+        """Remove jobs with unresolvable equipment conflicts from crew_days and
+        promote them into the unscheduled list."""
+        bumped_job_ids: set[str] = set(ctx.blackboard.get("equipment_bumped_jobs", []))
+        if not bumped_job_ids:
+            return
+
+        crew_days: list[CrewDay] = ctx.blackboard.get("crew_days", [])
+        cleaned: list[CrewDay] = []
+        for cd in crew_days:
+            original_len = len(cd.stops)
+            cd.stops = [s for s in cd.stops if s.job_id not in bumped_job_ids]
+            if cd.stops:
+                if len(cd.stops) != original_len:
+                    # Recompute work total; drive is an overestimate but safe.
+                    cd.total_work_minutes = sum(s.duration_minutes for s in cd.stops)
+                    crew_obj = store.get_crew(cd.crew_id)
+                    if crew_obj:
+                        load = cd.total_work_minutes + cd.total_drive_minutes
+                        cd.utilization = round(min(1.0, load / max(1, crew_obj.daily_minutes)), 2)
+                        cd.overbooked = load > crew_obj.daily_minutes
+                cleaned.append(cd)
+
+        ctx.blackboard["crew_days"] = cleaned
+
+        existing: set[str] = set(ctx.blackboard.get("unscheduled", []))
+        ctx.blackboard["unscheduled"] = list(existing | bumped_job_ids)
+
+        await ctx.emit(
+            self.name,
+            "evict",
+            f"Evicted {len(bumped_job_ids)} job(s) with unresolvable equipment conflicts "
+            f"to unscheduled: {', '.join(sorted(bumped_job_ids))}.",
+        )
 
     async def _summarize(
         self,

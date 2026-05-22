@@ -251,3 +251,151 @@ def test_equipment_gap_flagged():
                 assert cd.crew_id == "crew_bravo", (
                     f"Lift job {stop.job_id} incorrectly assigned to {cd.crew_id}"
                 )
+
+
+# ── Bug 1 regression: date constraint validation ──────────────────────────────
+
+def test_future_dated_job_excluded_from_plan():
+    """Jobs whose earliest_date is after the planning week_end must be completely
+    absent — neither scheduled nor unscheduled (filtered before planning)."""
+    sup = SupervisorAgent()
+    result = asyncio.run(sup.plan_week())
+
+    week_end = SEED_WEEK_START + timedelta(days=4)
+    all_jobs = store.list_jobs()
+    future_jobs = [
+        j for j in all_jobs
+        if j.earliest_date > week_end or j.latest_date < SEED_WEEK_START
+    ]
+
+    scheduled_ids = {s.job_id for d in result.plan.days for s in d.stops}
+    unscheduled_ids = set(result.plan.unscheduled_job_ids)
+    all_accounted = scheduled_ids | unscheduled_ids
+
+    for job in future_jobs:
+        assert job.id not in all_accounted, (
+            f"Future-dated job {job.id} (earliest={job.earliest_date}, "
+            f"latest={job.latest_date}) should be excluded from the plan "
+            f"(week {SEED_WEEK_START}–{week_end}) but was found in "
+            f"{'scheduled' if job.id in scheduled_ids else 'unscheduled'}."
+        )
+
+
+def test_date_constraint_job_w12_deferred():
+    """job_W12 has a future window (Aug 3–7) and must not appear in a July plan."""
+    sup = SupervisorAgent()
+    result = asyncio.run(sup.plan_week())
+
+    scheduled_ids = {s.job_id for d in result.plan.days for s in d.stops}
+    assert "job_W12" not in scheduled_ids, "job_W12 (Aug window) must not be scheduled in July"
+    assert "job_W12" not in result.plan.unscheduled_job_ids, (
+        "job_W12 should be filtered before planning, not appear in unscheduled_job_ids"
+    )
+
+
+# ── Bug 5 regression: rope-access jobs never silently dropped ─────────────────
+
+def test_rope_access_jobs_not_silently_dropped():
+    """Every in-window job that requires ROPE_ACCESS must appear in either
+    scheduled stops or unscheduled_job_ids — never silently dropped."""
+    from app.models import Skill
+
+    sup = SupervisorAgent()
+    result = asyncio.run(sup.plan_week())
+
+    week_end = SEED_WEEK_START + timedelta(days=4)
+    rope_jobs = [
+        j for j in store.list_jobs()
+        if Skill.ROPE_ACCESS in j.required_skills
+        and j.earliest_date <= week_end
+        and j.latest_date >= SEED_WEEK_START
+    ]
+    assert rope_jobs, "seed must contain rope-access jobs for this test to be meaningful"
+
+    scheduled_ids = {s.job_id for d in result.plan.days for s in d.stops}
+    unscheduled_ids = set(result.plan.unscheduled_job_ids)
+
+    for job in rope_jobs:
+        assert job.id in scheduled_ids or job.id in unscheduled_ids, (
+            f"Rope-access job {job.id} was silently dropped (not in scheduled or unscheduled)"
+        )
+
+
+# ── Bug 3 regression: preferred_day directive is honoured ─────────────────────
+
+def test_reschedule_preferred_day_is_honoured():
+    """When a preferred_day is passed to run_reschedule(), the rescheduled job
+    must land on that exact day if a valid slot exists."""
+    sup = SupervisorAgent()
+    result = asyncio.run(sup.plan_week())
+
+    # Pick the first scheduled job and a target day that is NOT its current day.
+    target = None
+    for d in result.plan.days:
+        for s in d.stops:
+            # Pick a job that is flexible enough: use full-week window jobs
+            job = store.get_job(s.job_id)
+            if job and job.earliest_date <= SEED_WEEK_START and job.latest_date >= SEED_WEEK_START + timedelta(days=4):
+                target = (s.job_id, d.day)
+                break
+        if target:
+            break
+
+    if target is None:
+        return  # no suitable job found; skip rather than fail
+
+    job_id, original_day = target
+    # Pick a preferred day that is DIFFERENT from the original
+    preferred = None
+    for delta in range(1, 5):
+        candidate = SEED_WEEK_START + timedelta(days=delta)
+        if candidate != original_day:
+            preferred = candidate
+            break
+
+    if preferred is None:
+        return
+
+    rescheduler = ReschedulerAgent()
+    out = asyncio.run(
+        rescheduler.run_reschedule(result, job_id, "Test preferred-day directive", preferred_day=preferred)
+    )
+
+    if out.succeeded:
+        # Only assert the preferred_day was honoured when that day was actually
+        # a viable candidate (i.e., there was crew capacity available on it).
+        preferred_was_viable = False
+        for evt in out.events:
+            if evt.phase == "evaluate" and evt.detail and "candidates" in evt.detail:
+                candidate_days = {c["day"] for c in evt.detail["candidates"]}
+                preferred_was_viable = preferred.isoformat() in candidate_days
+                break
+
+        if preferred_was_viable:
+            assert out.new_day == preferred, (
+                f"Expected job {job_id} to land on {preferred} (preferred_day, viable slot exists) "
+                f"but it landed on {out.new_day}"
+            )
+
+
+def test_rope_access_jobs_only_assigned_to_rope_crew():
+    """Rope-access jobs must only be assigned to crews that carry ROPE_ACCESS skill."""
+    from app.models import Skill
+
+    sup = SupervisorAgent()
+    result = asyncio.run(sup.plan_week())
+
+    rope_job_ids = {
+        j.id for j in store.list_jobs() if Skill.ROPE_ACCESS in j.required_skills
+    }
+    crews_by_id = {c.id: c for c in store.list_crews()}
+
+    for cd in result.plan.days:
+        crew = crews_by_id.get(cd.crew_id)
+        assert crew is not None
+        for stop in cd.stops:
+            if stop.job_id in rope_job_ids:
+                assert Skill.ROPE_ACCESS in crew.skills, (
+                    f"Rope-access job {stop.job_id} was assigned to crew {crew.name} "
+                    f"which does not have ROPE_ACCESS skill"
+                )
