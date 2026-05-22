@@ -104,7 +104,10 @@ class CursorCloudClient:
         self.ref = detect_git_ref()
         self.api_version = os.getenv("CURSOR_API_VERSION", "v1").strip().lower()
         self.auto_create_pr = _env_bool("CURSOR_AUTO_CREATE_PR", False)
-        self.model = os.getenv("CURSOR_HANDOFF_MODEL", "").strip() or None
+        self.model = (
+            os.getenv("CURSOR_HANDOFF_MODEL", "").strip()
+            or "claude-4.6-sonnet-thinking"
+        )
         self.timeout = float(os.getenv("CURSOR_API_TIMEOUT", "60"))
 
     @property

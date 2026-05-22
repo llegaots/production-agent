@@ -91,10 +91,17 @@ def _llm_failure_message(text: Optional[str]) -> Optional[str]:
 async def _chat_json(
     system: str, user: str, *, max_tokens: int = 2000
 ) -> tuple[Optional[dict], Optional[str]]:
-    """Returns (parsed_json, error_message)."""
+    """Returns (parsed_json, error_message). Uses the cheaper QA model when set."""
     if not llm.enabled:
         return None, "LLM not configured (add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env)."
-    text = await llm.chat(system, user, max_tokens=max_tokens, temperature=0.35)
+    text = await llm.chat(
+        system,
+        user,
+        max_tokens=max_tokens,
+        temperature=0.35,
+        trace_label="qa.llm",
+        model_override=llm.qa_model,
+    )
     err = _llm_failure_message(text)
     if err:
         return None, err
@@ -120,7 +127,7 @@ async def design_test_case(
         "Invent a fresh operator scenario: rain delay, owner wants crew fill, high-rise skill mismatch, "
         "client window violation, cross-zone routing mistake, reschedule after cancellation, etc."
     )
-    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1200)
+    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=700)
     if err:
         return {"_error": err}
     return data
@@ -140,7 +147,7 @@ async def critique_schedule(
     )
     if prior_critique:
         user += f"\nPrior critique (you may soften if replan fixed issues):\n{json.dumps(prior_critique, default=str)}\n"
-    data, err = await _chat_json(CRITIC_SYSTEM, user, max_tokens=2500)
+    data, err = await _chat_json(CRITIC_SYSTEM, user, max_tokens=1400)
     if err:
         return {"_error": err, "verdict": "fail", "viability_score": 0, "executive_summary": err}
     return data
@@ -152,7 +159,7 @@ async def synthesize_run(
     vision: str = PRODUCTION_MANAGER_VISION,
 ) -> Optional[dict]:
     user = f"Vision:\n{vision}\n\nCase results:\n{json.dumps(cases, default=str, indent=2)}"
-    data, err = await _chat_json(SYNTHESIZER_SYSTEM, user, max_tokens=2000)
+    data, err = await _chat_json(SYNTHESIZER_SYSTEM, user, max_tokens=900)
     if err:
         return {"overall_assessment": err, "top_bugs": [err], "recommended_cursor_tasks": []}
     return data

@@ -384,7 +384,10 @@
         </div>
         <p class="text-[10px] text-neutral-500 w-full" x-show="qaRunning && qaProgressMessage" x-text="qaProgressMessage"></p>
         <div class="ml-auto flex flex-wrap items-center gap-2">
-          <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">LLM on · AI QA</span>
+          <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">
+            QA on <span x-text="config.llm_model"></span>
+            <template x-if="config.cursor_handoff_model"><span> · auto-fix on <span x-text="config.cursor_handoff_model"></span></span></template>
+          </span>
           <span class="text-[10px] text-amber-400" x-show="!config.llm_enabled && qaApiReady">No LLM key — use legacy QA</span>
           <button @click="runQaSuite('ai')" :disabled="qaRunning || !config.llm_enabled"
                   class="text-xs px-3 py-1.5 rounded-md bg-accent-500 text-surface-950 font-medium disabled:opacity-50"

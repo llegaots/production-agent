@@ -29,6 +29,50 @@ _OPENAI_MODEL_ALIASES = {
 }
 
 
+# Friendly aliases → real Anthropic model IDs (dashes, not dots).
+# Anthropic accepts dateless IDs from the 4.6 generation onward; earlier
+# generations require dated snapshots.
+_ANTHROPIC_MODEL_ALIASES = {
+    # 4.6 / 4.7 generation — dateless canonical IDs
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus-4.7": "claude-opus-4-7",
+    "claude-opus-4-7": "claude-opus-4-7",
+    "claude-opus-4.6": "claude-opus-4-6",
+    "claude-opus-4-6": "claude-opus-4-6",
+    # 4.5 family — dated IDs / aliases
+    "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+    "claude-opus-4.5": "claude-opus-4-5-20251101",
+    "claude-opus-4-5": "claude-opus-4-5-20251101",
+    "claude-haiku-4.5": "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+    # Convenience shortcuts users sometimes write
+    "sonnet": "claude-sonnet-4-6",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "sonnet-4-6": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-7",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def _normalize_anthropic_model(raw: str) -> str:
+    """Map friendly names (with dots, missing prefix) to real Anthropic model IDs.
+
+    Anthropic IDs use dashes (claude-sonnet-4-6), not dots (claude-sonnet-4.6).
+    Users frequently write the latter — without normalization the API 400s.
+    """
+    key = raw.strip().lower()
+    if not key:
+        return "claude-sonnet-4-6"
+    if key in _ANTHROPIC_MODEL_ALIASES:
+        return _ANTHROPIC_MODEL_ALIASES[key]
+    # Generic rule: replace dots with dashes inside any claude-* id.
+    if key.startswith("claude-") and "." in key:
+        return key.replace(".", "-")
+    return raw
+
+
 def _http_error_detail(exc: Exception) -> str:
     """Extract API error body from httpx HTTPStatusError when present."""
     resp = getattr(exc, "response", None)
@@ -69,7 +113,9 @@ class LLMClient:
 
         if self.provider == "anthropic":
             raw = (os.getenv("ANTHROPIC_MODEL") or "").strip()
-            self.model = raw or "claude-sonnet-4-20250514"
+            normalized = _normalize_anthropic_model(raw) if raw else "claude-sonnet-4-6"
+            self.model = normalized
+            self.model_raw = raw
             if not raw:
                 self.model_source = "default"
             elif ENV_PATH.exists():
@@ -97,6 +143,16 @@ class LLMClient:
             return "OpenAI"
         return "off"
 
+    @property
+    def qa_model(self) -> str:
+        """Optional cheaper model for AI QA loops (avoids burning Opus credits)."""
+        if self.provider != "anthropic":
+            return self.model
+        raw = (os.getenv("ANTHROPIC_QA_MODEL") or "").strip()
+        if not raw:
+            return self.model
+        return _normalize_anthropic_model(raw)
+
     async def chat(
         self,
         system: str,
@@ -106,6 +162,7 @@ class LLMClient:
         temperature: float = 0.4,
         trace: Optional[TraceFn] = None,
         trace_label: str = "llm.chat",
+        model_override: Optional[str] = None,
     ) -> Optional[str]:
         if not self.enabled:
             return None
@@ -124,14 +181,17 @@ class LLMClient:
                 },
             )
 
+        effective_model = model_override or self.model
         try:
             if self.provider == "anthropic":
                 text, usage = await self._chat_anthropic(
-                    system, user, max_tokens=max_tokens, temperature=temperature
+                    system, user, max_tokens=max_tokens, temperature=temperature,
+                    model=effective_model,
                 )
             else:
                 text, usage = await self._chat_openai(
-                    system, user, max_tokens=max_tokens, temperature=temperature
+                    system, user, max_tokens=max_tokens, temperature=temperature,
+                    model=effective_model,
                 )
         except Exception as exc:  # noqa: BLE001 - LLM is optional
             detail = _http_error_detail(exc)
@@ -159,15 +219,17 @@ class LLMClient:
         *,
         max_tokens: int,
         temperature: float,
+        model: Optional[str] = None,
     ) -> dict:
+        model_id = model or self.model
         payload: dict = {
-            "model": self.model,
+            "model": model_id,
             "max_tokens": max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
-        # Newer Claude models (e.g. opus-4) reject temperature on the Messages API.
-        if not re.search(r"opus-4|claude-4-", self.model, re.I):
+        # Newer Claude models (opus-4, sonnet-4-6, etc.) reject temperature.
+        if not re.search(r"opus-4|claude-4-|sonnet-4-6|opus-4-6|opus-4-7", model_id, re.I):
             payload["temperature"] = temperature
         return payload
 
@@ -178,6 +240,7 @@ class LLMClient:
         *,
         max_tokens: int,
         temperature: float,
+        model: Optional[str] = None,
     ) -> tuple[str, dict]:
         url = f"{self.anthropic_base}/v1/messages"
         headers = {
@@ -186,13 +249,13 @@ class LLMClient:
             "content-type": "application/json",
         }
         payload = self._anthropic_payload(
-            system, user, max_tokens=max_tokens, temperature=temperature
+            system, user, max_tokens=max_tokens, temperature=temperature, model=model
         )
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(url, headers=headers, json=payload)
             if r.status_code == 400 and "temperature" in (r.text or "").lower():
                 payload = self._anthropic_payload(
-                    system, user, max_tokens=max_tokens, temperature=temperature
+                    system, user, max_tokens=max_tokens, temperature=temperature, model=model
                 )
                 payload.pop("temperature", None)
                 r = await client.post(url, headers=headers, json=payload)
@@ -215,10 +278,11 @@ class LLMClient:
         *,
         max_tokens: int,
         temperature: float,
+        model: Optional[str] = None,
     ) -> tuple[str, dict]:
         url = f"{self.openai_base}/chat/completions"
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
