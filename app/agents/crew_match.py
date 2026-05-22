@@ -1,9 +1,12 @@
 """CrewMatchAgent - assigns crews & days to geographic clusters.
 
-The scoring blends three concerns:
-  - Skill fit: do crew members have the certifications jobs need?
-  - Difficulty fit: harder jobs prefer more capable crews
-  - Capacity fit: heavier clusters prefer crews with more daily minutes
+Anthropic pattern: **Workflow step (router + scorer)**.
+
+For each cluster the agent first applies *hard filters* (the crew must
+have every required skill and every required equipment kind) and then
+scores the remaining (crew, day) pairs on soft signals (skill overlap,
+specialty fit, headroom for load-balancing). The highest-scoring slot
+wins.
 
 It produces a preliminary ``draft_plan`` on the blackboard, a list of
 ``{crew_id, day, job_ids}`` tuples. Subsequent agents validate equipment

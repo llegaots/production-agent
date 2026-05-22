@@ -1,8 +1,11 @@
 """TimeBudgetAgent - sequences jobs in each crew/day and validates time fit.
 
-Produces ``CrewDay`` records with ordered ``ScheduledStop`` entries that
-include travel time between stops. Flags overbooked days and per-day
-warnings (e.g., "after-hours storefront job is scheduled at 9am").
+Anthropic pattern: **Parallelization (sectioning)**.
+
+Runs concurrently with EquipmentAgent. Produces ``CrewDay`` records with
+ordered ``ScheduledStop`` entries that include travel time between stops.
+Flags overbooked days and per-day warnings (e.g., "after-hours storefront
+job is scheduled at 9am").
 """
 from __future__ import annotations
 

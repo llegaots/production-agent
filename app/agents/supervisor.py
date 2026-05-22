@@ -1,17 +1,39 @@
-"""SupervisorAgent - orchestrates the multi-agent weekly plan."""
+"""SupervisorAgent - orchestrates the multi-agent weekly plan.
+
+Anthropic pattern: **Orchestrator-workers**.
+
+The supervisor runs the agents in four phases:
+
+    Phase 1: sequential       GeoCluster -> CrewMatch
+    Phase 2: parallel         Equipment  ||  TimeBudget       (sectioning)
+    Phase 3: comms pipeline   ClientComms (route -> draft -> critic||guardrail -> revise?)
+    Phase 4: evaluator        PlanReviewer
+
+It threads a typed ``AgentContext`` through every step, aggregates
+conflicts produced by each specialist, and streams agent events to the
+caller so the UI can render a live transcript of the run.
+"""
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from typing import Optional
 
 from ..llm import llm
-from ..models import CrewDay, PlanResult, WeekPlan
+from ..models import (
+    CrewDay,
+    MessageQuality,
+    PlanResult,
+    PlanReview,
+    WeekPlan,
+)
 from ..storage import store
 from .base import Agent, AgentContext, EventEmitter
 from .client_comms import ClientCommsAgent
 from .crew_match import CrewMatchAgent
 from .equipment import EquipmentAgent
 from .geo_cluster import GeoClusterAgent
+from .plan_reviewer import PlanReviewerAgent
 from .time_budget import TimeBudgetAgent
 
 
@@ -31,6 +53,7 @@ class SupervisorAgent(Agent):
         self.equipment = EquipmentAgent()
         self.budget = TimeBudgetAgent()
         self.comms = ClientCommsAgent()
+        self.reviewer = PlanReviewerAgent()
 
     async def plan_week(
         self,
@@ -45,11 +68,25 @@ class SupervisorAgent(Agent):
 
         await ctx.emit(self.name, "start", f"Planning week starting {ws.isoformat()} with {len(jobs)} jobs across {len(crews)} crews.")
 
+        # Phase 1 - sequential dependencies: geo cluster -> crew match
         await self.geo.run(ctx)
         await self.crew.run(ctx)
-        await self.equipment.run(ctx)
-        await self.budget.run(ctx)
+
+        # Phase 2 - parallel sectioning: equipment + time-budget validate
+        # independent aspects of the draft plan. Anthropic's "parallelization
+        # (sectioning)" pattern: each agent focuses on one specific aspect.
+        await ctx.emit(
+            self.name,
+            "parallel",
+            "Running Equipment and TimeBudget validators in parallel.",
+        )
+        await asyncio.gather(self.equipment.run(ctx), self.budget.run(ctx))
+
+        # Phase 3 - comms pipeline (router -> draft -> guardrail || critic -> redraft).
         await self.comms.run(ctx)
+
+        # Phase 4 - evaluator on the assembled plan.
+        await self.reviewer.run(ctx)
 
         crew_days: list[CrewDay] = ctx.blackboard.get("crew_days", [])
         unscheduled: list[str] = ctx.blackboard.get("unscheduled", [])
@@ -71,10 +108,30 @@ class SupervisorAgent(Agent):
             conflicts=conflicts,
             summary=summary,
         )
+
+        # Per-message quality (from the comms sub-pipeline)
+        critic_scores = ctx.blackboard.get("message_critic_scores", {})
+        guardrail_flag_list = ctx.blackboard.get("message_guardrail_flags", [])
+        flagged_jobs = {f["job_id"]: f["flags"] for f in guardrail_flag_list}
+        message_quality: dict[str, MessageQuality] = {}
+        for jid, score in critic_scores.items():
+            message_quality[jid] = MessageQuality(
+                job_id=jid,
+                score=score,
+                guardrail_passed=jid not in flagged_jobs,
+                guardrail_flags=flagged_jobs.get(jid, []),
+            )
+
+        # Plan review (from PlanReviewerAgent)
+        review_raw = ctx.blackboard.get("plan_review")
+        review = PlanReview(**review_raw) if review_raw else None
+
         result = PlanResult(
             plan=plan,
             events=ctx.events,
             client_messages=ctx.blackboard.get("client_messages", {}),
+            message_quality=message_quality,
+            review=review,
         )
 
         # Persist & mark scheduled jobs

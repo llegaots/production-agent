@@ -8,40 +8,75 @@ geographic proximity, time budgets, and per-client confirmations. When a
 disruption hits (weather, callout, equipment failure), a dedicated agent
 re-plans just the affected jobs and drafts a client-facing reschedule note.
 
+## Design principles
+
+The system follows Anthropic's [Building Effective Agents](https://www.anthropic.com/research/building-effective-agents) guidance:
+
+1. **Simplicity** — no heavy agent framework. Each agent is a small class
+   with an `async run(ctx)` method; the supervisor orchestrates them through
+   a typed pipeline. Easy to read, easy to test, easy to debug.
+2. **Transparency** — every agent emits structured `AgentEvent`s that stream
+   to the UI over Server-Sent Events as the pipeline runs. The rescheduler
+   in particular *enumerates* the candidate slots and scores them out loud
+   before picking one.
+3. **Deterministic correctness, LLM-augmented narrative** — scheduling logic
+   is rule-based and fully tested. The LLM is used only to write the
+   executive summary and personalize client messages, and every LLM call has
+   a deterministic fallback so the product is fully demoable offline.
+
 ## Agents
 
-Six specialist agents collaborate under a supervisor:
+| Agent | Responsibility | Anthropic pattern |
+| --- | --- | --- |
+| `GeoClusterAgent` | Group jobs by proximity into day-sized buckets | Workflow step |
+| `CrewMatchAgent` | Assign crews & days under hard skill+equipment filters, load-balanced | Workflow step (router-like, hard-filter + soft-score) |
+| `EquipmentAgent` | Validate loadouts, flag day-level contention and per-job gaps | **Parallelization (sectioning)** — runs concurrently with TimeBudget |
+| `TimeBudgetAgent` | Sequence stops with travel time, compute utilization, flag overbooking | **Parallelization (sectioning)** — runs concurrently with Equipment |
+| `ClientCommsAgent` | Routes each job to a tonal profile (residential / commercial / phone), drafts a message, then iterates with critic + guardrail feedback | **Routing** + **Evaluator-optimizer** + **Parallelization** (the sub-pipeline does all three) |
+| `MessageCriticAgent` | Scores a drafted message 0–100 for tone, completeness, brevity; returns structured JSON when LLM is enabled | **Evaluator-optimizer (evaluator side)** |
+| `MessageGuardrailAgent` | Compliance / quality check: no other-client leakage, date and arrival window stated, has a call-to-action | **Parallelization (sectioning)** — runs concurrently with the critic |
+| `PlanReviewerAgent` | Scores the assembled plan (revenue, drive ratio, overbooking, equipment gaps, message quality) into KPIs + a 0–100 risk score, then writes a short narrative review | **Evaluator-optimizer (evaluator side)** |
+| `ReschedulerAgent` | On disruption, enumerates *all* viable (day, crew) slots with explicit trade-off scores, then picks #1 with reasoning, resequences the day, and drafts a client note | Workflow step (transparent decision-making) |
+| `SupervisorAgent` | Orchestrates the pipeline; phase 1 sequential (geo → match), phase 2 parallel (equipment ‖ budget), phase 3 comms sub-pipeline, phase 4 plan review | **Orchestrator-workers** |
 
-| Agent | Responsibility |
-| --- | --- |
-| `GeoClusterAgent` | Groups jobs by proximity so geographically-close work runs together |
-| `CrewMatchAgent` | Assigns crews & days to clusters based on skill fit, difficulty, capacity |
-| `EquipmentAgent` | Validates equipment loadouts, surfaces day-level contention and per-job gaps |
-| `TimeBudgetAgent` | Sequences stops with travel-time, computes utilization, flags overbooked days |
-| `ClientCommsAgent` | Drafts a per-job confirmation message for every scheduled job |
-| `ReschedulerAgent` | Triggered on disruption — picks the next-best slot and drafts a reschedule note |
-| `SupervisorAgent` | Orchestrates the pipeline, aggregates conflicts, writes the weekly summary |
+### Stopping conditions
 
-The core scheduling logic is **deterministic and rule-based** — no LLM is
-required to produce a valid plan. If an `OPENAI_API_KEY` is configured,
-agents additionally use the LLM to write the weekly executive summary and
-warm, personalized client messages. Otherwise, clean templates are used.
+Following Anthropic's guidance to "include stopping conditions to maintain
+control", the only loop in the system (the comms agent's evaluator-optimizer)
+caps at **two iterations**: draft, critique, optionally redraft, then accept
+whatever the second draft scored. The rescheduler is bounded by the
+candidate set, not a loop.
+
+### Ground truth
+
+Each agent reads from a shared, typed-where-it-matters blackboard
+(`AgentContext`), so every downstream agent gets fresh facts produced by
+the previous step rather than passing free-form text. The final
+`PlanResult` is a Pydantic model — including a `PlanReview` with
+structured KPIs, a numeric risk score, and per-job `MessageQuality`
+records — so downstream consumers (future evaluator-optimizer loops, a
+dashboard, another agent) can branch on values, not parse text.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      SupervisorAgent                            │
-│   ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐  ┌─────┐ │
-│   │ GeoCluster │→│ CrewMatch │→│ Equipment │→│ TimeBudget │→│Comms│ │
-│   └─────────┘  └──────────┘  └─────────┘  └──────────┘  └─────┘ │
-│                              ↓ blackboard ↓                     │
-│                          Final WeekPlan                         │
-└─────────────────────────────────────────────────────────────────┘
-                  │
-                  │ on disruption
-                  ▼
-            ReschedulerAgent  →  patched WeekPlan + client message
+┌───────────────────────── SupervisorAgent (orchestrator) ───────────────────────┐
+│                                                                                │
+│   Phase 1 (sequential)        Phase 2 (parallel)            Phase 3 (comms)    │
+│   ┌──────────┐  ┌──────────┐  ┌─────────────┐               ┌────────────────┐ │
+│   │GeoCluster│→ │CrewMatch │→ │ Equipment   │ ─┐            │ ClientComms    │ │
+│   └──────────┘  └──────────┘  └─────────────┘  │            │  ├─ route      │ │
+│                                ┌─────────────┐ │            │  ├─ draft      │ │
+│                                │ TimeBudget  │ │            │  ├─ (Critic    │ │
+│                                └─────────────┘ ┘            │  │   ‖         │ │
+│                                                             │  │  Guardrail) │ │
+│                  Phase 4 (evaluator)                        │  ├─ revise?    │ │
+│                  ┌────────────────┐                         │  └─ accept     │ │
+│                  │ PlanReviewer   │ ← KPIs + risk score     └────────────────┘ │
+│                  └────────────────┘                                            │
+│                                                                                │
+│   On disruption: ReschedulerAgent enumerates candidates → scores → picks #1    │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Agents share state through an `AgentContext` blackboard and emit
@@ -83,33 +118,40 @@ The tests run the deterministic path and validate that:
 
 - the seed populates the store,
 - a plan schedules nearly all jobs across the right crew-days,
-- every specialist agent emits at least one event,
+- every specialist agent (including the PlanReviewer) emits at least one event,
 - the comms agent drafts a message for every scheduled job,
-- rescheduling moves a job to a different `(day, crew)` pair, and
+- the comms agent emits routing and iteration events (the evaluator-optimizer loop),
+- every scheduled job has a quality score,
+- the plan review is structured (KPIs + 0–100 risk score + narrative),
+- the guardrail catches missing call-to-action and other-client leakage,
+- rescheduling enumerates candidates with trade-offs and picks the best explicitly, and
 - high-rise jobs are placed with a rope-capable crew (no equipment gap).
 
 ## File layout
 
 ```
 app/
-  main.py             FastAPI app + SSE stream
-  models.py           Pydantic domain models
-  storage.py          In-memory store
-  seed.py             Sample data (ClearView Exterior Services in Austin)
-  llm.py              Optional OpenAI-compatible client
+  main.py                 FastAPI app + SSE stream
+  models.py               Pydantic domain models (incl. PlanReview, MessageQuality)
+  storage.py              In-memory store
+  seed.py                 Sample data (ClearView Exterior Services in Austin)
+  llm.py                  Optional OpenAI-compatible client
   agents/
-    base.py           AgentContext, EventEmitter, geo helpers
-    geo_cluster.py    GeoClusterAgent
-    crew_match.py     CrewMatchAgent
-    equipment.py      EquipmentAgent
-    time_budget.py    TimeBudgetAgent
-    client_comms.py   ClientCommsAgent
-    reschedule.py     ReschedulerAgent
-    supervisor.py     SupervisorAgent (orchestrator)
+    base.py               AgentContext, EventEmitter, geo helpers
+    geo_cluster.py        GeoClusterAgent
+    crew_match.py         CrewMatchAgent
+    equipment.py          EquipmentAgent
+    time_budget.py        TimeBudgetAgent
+    client_comms.py       ClientCommsAgent (router + drafter + loop coordinator)
+    message_critic.py     MessageCriticAgent (evaluator)
+    message_guardrail.py  MessageGuardrailAgent (compliance/quality)
+    plan_reviewer.py      PlanReviewerAgent (whole-plan evaluator)
+    reschedule.py         ReschedulerAgent
+    supervisor.py         SupervisorAgent (orchestrator)
 static/
-  index.html          Single-page UI (Tailwind + Alpine.js)
+  index.html              Single-page UI (Tailwind + Alpine.js)
 tests/
-  test_planner.py     End-to-end tests for the rule-based path
+  test_planner.py         End-to-end tests (12 tests, deterministic path)
 ```
 
 ## Notes & next steps

@@ -132,10 +132,27 @@ class AgentEvent(BaseModel):
     detail: Optional[dict] = None
 
 
+class MessageQuality(BaseModel):
+    job_id: str
+    score: int
+    guardrail_passed: bool
+    guardrail_flags: list[str] = Field(default_factory=list)
+
+
+class PlanReview(BaseModel):
+    kpis: dict
+    risk_score: int = 0
+    top_concern: Optional[str] = None
+    recommendation: Optional[str] = None
+    narrative: str = ""
+
+
 class PlanResult(BaseModel):
     plan: WeekPlan
     events: list[AgentEvent] = Field(default_factory=list)
     client_messages: dict[str, str] = Field(default_factory=dict)  # job_id -> message
+    message_quality: dict[str, MessageQuality] = Field(default_factory=dict)
+    review: Optional[PlanReview] = None
 
 
 class RescheduleRequest(BaseModel):

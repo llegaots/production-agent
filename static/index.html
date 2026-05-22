@@ -144,14 +144,27 @@
 
       <!-- Weekly schedule -->
       <div class="col-span-12 lg:col-span-7 bg-ink-900 border border-ink-700 rounded-xl flex flex-col" style="min-height: 520px;">
-        <div class="px-5 py-4 border-b border-ink-700 flex items-center justify-between">
-          <div>
-            <h3 class="font-semibold">Weekly schedule</h3>
-            <p class="text-xs text-slate-400">
-              <span x-text="plan ? plan.plan.summary || 'Plan ready.' : 'No plan yet.'"></span>
-            </p>
+        <div class="px-5 py-4 border-b border-ink-700 flex items-start justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <h3 class="font-semibold">Weekly schedule</h3>
+              <template x-if="plan?.review">
+                <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold"
+                      :class="riskBadgeClass(plan.review.risk_score)"
+                      x-text="`risk ${plan.review.risk_score}/100`"></span>
+              </template>
+            </div>
+            <p class="text-xs text-slate-400" x-text="plan?.review?.narrative || plan?.plan?.summary || 'No plan yet.'"></p>
+            <template x-if="plan?.review?.top_concern">
+              <p class="text-[11px] mt-1 text-amber-300/90">
+                <span class="font-medium">Top concern:</span>
+                <span x-text="plan.review.top_concern"></span>
+                <span x-show="plan.review.recommendation" class="text-slate-400"> — </span>
+                <span x-show="plan.review.recommendation" class="text-slate-300" x-text="plan.review.recommendation"></span>
+              </p>
+            </template>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             <button @click="openMessages = true" :disabled="!plan" class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-slate-500 disabled:opacity-50">Client messages</button>
           </div>
         </div>
@@ -258,8 +271,13 @@
       </div>
     </section>
 
-    <footer class="text-xs text-slate-500 text-center pb-6">
-      ProductionAgent · Six specialist agents (Geo&nbsp;Cluster, Crew&nbsp;Match, Equipment, Time&nbsp;Budget, Client&nbsp;Comms, Rescheduler) coordinated by a Supervisor.
+    <footer class="text-xs text-slate-500 text-center pb-6 max-w-3xl mx-auto">
+      Anthropic patterns at work: <span class="text-slate-400">Orchestrator-workers</span>
+      (Supervisor) · <span class="text-slate-400">Parallelization-sectioning</span>
+      (Equipment&nbsp;‖&nbsp;TimeBudget, Critic&nbsp;‖&nbsp;Guardrail) ·
+      <span class="text-slate-400">Routing</span> (Client&nbsp;Comms by service/channel) ·
+      <span class="text-slate-400">Evaluator-optimizer</span> (Critic loop, Plan&nbsp;Reviewer) ·
+      <span class="text-slate-400">Transparent decision-making</span> (Rescheduler enumerates candidates).
     </footer>
 
     <!-- Job detail modal -->
@@ -354,11 +372,32 @@
         </div>
         <div class="p-5 space-y-4">
           <template x-for="[jobId, msg] in messageEntries()" :key="jobId">
-            <div class="bg-ink-800/60 border border-ink-700 rounded-md p-3">
-              <div class="flex items-center justify-between mb-2">
-                <div class="text-xs text-slate-400" x-text="`${clientName(jobIdToJob(jobId)?.client_id)} · ${jobId}`"></div>
-                <button @click="copy(msg)" class="text-[10px] text-slate-400 hover:text-slate-200">Copy</button>
+            <div class="bg-ink-800/60 border rounded-md p-3"
+                 :class="(plan?.message_quality?.[jobId]?.guardrail_passed === false) ? 'border-rose-500/50' : 'border-ink-700'">
+              <div class="flex items-center justify-between mb-2 gap-2">
+                <div class="text-xs text-slate-400 truncate" x-text="`${clientName(jobIdToJob(jobId)?.client_id)} · ${jobId}`"></div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <template x-if="plan?.message_quality?.[jobId]">
+                    <span class="text-[10px] mono px-1.5 py-0.5 rounded"
+                          :class="qualityBadgeClass(plan.message_quality[jobId].score)"
+                          x-text="`Q ${plan.message_quality[jobId].score}/100`"></span>
+                  </template>
+                  <template x-if="plan?.message_quality?.[jobId]?.guardrail_passed === false">
+                    <span class="text-[10px] uppercase tracking-wider text-rose-300">Guardrail</span>
+                  </template>
+                  <button @click="copy(msg)" class="text-[10px] text-slate-400 hover:text-slate-200">Copy</button>
+                </div>
               </div>
+              <template x-if="plan?.message_quality?.[jobId]?.guardrail_passed === false">
+                <div class="text-[11px] text-rose-300/90 mb-2">
+                  <div class="font-medium uppercase tracking-wider text-rose-300">Flags</div>
+                  <ul class="list-disc list-inside">
+                    <template x-for="f in plan.message_quality[jobId].guardrail_flags" :key="f">
+                      <li x-text="f"></li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
               <div class="text-sm whitespace-pre-wrap" x-text="msg"></div>
             </div>
           </template>
@@ -396,6 +435,7 @@
           { name: 'EquipmentAgent', label: 'Equipment' },
           { name: 'TimeBudgetAgent', label: 'Time Budget' },
           { name: 'ClientCommsAgent', label: 'Client Comms' },
+          { name: 'PlanReviewerAgent', label: 'Plan Reviewer' },
           { name: 'ReschedulerAgent', label: 'Rescheduler' },
         ],
 
@@ -506,6 +546,7 @@
             EquipmentAgent: ['text-amber-300', 'bg-amber-500', 'border-amber-500/40 bg-amber-500/10'],
             TimeBudgetAgent: ['text-indigo-300', 'bg-indigo-500', 'border-indigo-500/40 bg-indigo-500/10'],
             ClientCommsAgent: ['text-rose-300', 'bg-rose-500', 'border-rose-500/40 bg-rose-500/10'],
+            PlanReviewerAgent: ['text-cyan-300', 'bg-cyan-500', 'border-cyan-500/40 bg-cyan-500/10'],
             ReschedulerAgent: ['text-orange-300', 'bg-orange-500', 'border-orange-500/40 bg-orange-500/10'],
           };
           const t = map[name] || ['text-slate-300', 'bg-slate-500', 'border-slate-500/40 bg-slate-500/10'];
@@ -520,8 +561,21 @@
             EquipmentAgent: 'equip',
             TimeBudgetAgent: 'budget',
             ClientCommsAgent: 'comms',
+            PlanReviewerAgent: 'review',
             ReschedulerAgent: 'resched',
           })[name] || name;
+        },
+
+        riskBadgeClass(score) {
+          if (score >= 60) return 'bg-rose-500/20 border border-rose-500/40 text-rose-300';
+          if (score >= 30) return 'bg-amber-500/20 border border-amber-500/40 text-amber-300';
+          return 'bg-accent-500/15 border border-accent-500/40 text-accent-500';
+        },
+
+        qualityBadgeClass(score) {
+          if (score >= 80) return 'bg-accent-500/15 text-accent-500';
+          if (score >= 60) return 'bg-amber-500/15 text-amber-300';
+          return 'bg-rose-500/15 text-rose-300';
         },
 
         async planWeek() {

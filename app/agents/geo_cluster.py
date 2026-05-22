@@ -1,4 +1,11 @@
-"""GeoClusterAgent - groups jobs by geographic proximity into day buckets."""
+"""GeoClusterAgent - groups jobs by geographic proximity into day buckets.
+
+Anthropic pattern: **Workflow step (prompt-chaining input)**.
+
+This is the first step of the planning chain. It produces a deterministic,
+geometric partitioning of the job backlog so downstream agents can reason
+over coherent route-sized groups instead of N independent jobs.
+"""
 from __future__ import annotations
 
 from .base import Agent, AgentContext, haversine_km, week_days

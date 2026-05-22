@@ -1,5 +1,11 @@
 """EquipmentAgent - validates equipment availability for each crew/day.
 
+Anthropic pattern: **Parallelization (sectioning)**.
+
+The supervisor runs this agent concurrently with TimeBudgetAgent because
+they validate independent aspects of the same draft plan. Sectioning is
+more reliable than asking one prompt to do both.
+
 Each crew has a fixed equipment loadout. The agent flags any job that
 requires equipment the assigned crew does not carry, and surfaces a clear
 remediation (swap crews, reschedule day, or rent).
