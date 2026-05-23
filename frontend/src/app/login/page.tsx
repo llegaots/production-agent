@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { supabaseConfigError } from "@/lib/supabase/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,8 +16,14 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const configError = supabaseConfigError();
+
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
+    if (configError) {
+      setError(configError);
+      return;
+    }
     setLoading(true);
     setError(null);
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
@@ -54,6 +61,9 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+            {configError ? (
+              <p className="text-destructive text-sm">{configError}</p>
+            ) : null}
             {error ? <p className="text-destructive text-sm">{error}</p> : null}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Signing in…" : "Sign in"}

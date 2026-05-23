@@ -23,6 +23,11 @@ class Settings(BaseSettings):
         ...,
         description="Supabase service role key (server-side only)",
     )
+    supabase_anon_key: str | None = Field(
+        default=None,
+        description="Optional anon/public key for browser clients (defaults to service key in UI bootstrap)",
+        validation_alias="SUPABASE_ANON_KEY",
+    )
     supabase_db_url: PostgresDsn | None = Field(
         default=None,
         description="Direct Postgres connection string (migrations, raw SQL)",
