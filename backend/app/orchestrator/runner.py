@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -17,8 +18,18 @@ from app.orchestrator.schemas import (
     ScheduleRunResult,
     ScheduleWeekInput,
 )
+from app.optimizer.models import OptimizerResult
 from app.orchestrator.tool_dispatch import TOOL_DEFINITIONS, execute_tool
+from app.orchestrator.week_plan import (
+    eligible_jobs_for_day,
+    iter_week_days,
+    load_job_date_windows,
+)
 from app.tools._db import tools_db
+from app.tools.crew_availability import get_crew_availability
+from app.tools.schemas import GetCrewAvailabilityInput
+
+logger = logging.getLogger(__name__)
 
 
 def _next_week_bounds(today: date | None = None) -> tuple[date, date]:
@@ -93,16 +104,20 @@ def _log_iteration(
 def _get_langfuse_trace():
     settings = get_settings()
     if not settings.langfuse_public_key or not settings.langfuse_secret_key:
+        logger.debug("Langfuse disabled: LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set")
         return None
     try:
         from langfuse import Langfuse
 
-        return Langfuse(
+        client = Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
             host=settings.langfuse_host,
         )
+        logger.info("Langfuse client initialized (host=%s)", settings.langfuse_host)
+        return client
     except Exception:
+        logger.exception("Failed to initialize Langfuse client (host=%s)", settings.langfuse_host)
         return None
 
 
@@ -198,6 +213,112 @@ def _iteration_user_message(ctx: OrchestratorContext) -> str:
             f"{ctx.critic_feedback}\n"
         )
     return msg
+
+
+def _merge_optimizer_results(
+    accumulated: OptimizerResult | None,
+    addition: OptimizerResult,
+) -> OptimizerResult:
+    from app.optimizer.models import OptimizerResult as OR
+
+    if accumulated is None:
+        return addition
+    routes = [r for r in list(accumulated.routes) + list(addition.routes) if r.stops]
+    assigned = set(accumulated.assigned_job_ids) | set(addition.assigned_job_ids)
+    unassigned = set(accumulated.unassigned_job_ids) | set(addition.unassigned_job_ids)
+    unassigned -= assigned
+    status = addition.status if not routes else ("feasible" if unassigned else accumulated.status)
+    return OR(
+        status=status,
+        routes=routes,
+        unassigned_job_ids=sorted(unassigned),
+        messages=list(accumulated.messages) + list(addition.messages),
+        objective_cost=addition.objective_cost or accumulated.objective_cost,
+    )
+
+
+def _ensure_crew_ids(ctx: OrchestratorContext, day: date) -> None:
+    if ctx.crew_ids:
+        return
+    avail = get_crew_availability(
+        GetCrewAvailabilityInput(target_date=day, crew_ids=None),
+    )
+    ctx.crew_ids = [c.crew_id for c in avail.crews if c.is_available]
+
+
+def _run_week_programmatic(ctx: OrchestratorContext) -> None:
+    """Schedule across Mon–Fri with batched daily optimizer runs."""
+    from app.optimizer.models import OptimizerResult
+
+    all_job_ids = list(ctx.job_ids)
+    windows = load_job_date_windows(all_job_ids)
+    remaining = list(all_job_ids)
+    merged: OptimizerResult | None = None
+    last_target = ctx.week_start
+
+    for day in iter_week_days(ctx.week_start, ctx.week_end):
+        if not remaining:
+            break
+        _ensure_crew_ids(ctx, day)
+        batch = eligible_jobs_for_day(remaining, day, windows=windows, limit=12)
+        if not batch:
+            continue
+
+        execute_tool(
+            "get_crew_availability",
+            {"target_date": day.isoformat(), "crew_ids": ctx.crew_ids or None},
+            ctx,
+        )
+        execute_tool(
+            "check_equipment",
+            {"job_ids": batch, "crew_ids": ctx.crew_ids},
+            ctx,
+        )
+        execute_tool(
+            "run_optimizer",
+            {
+                "target_date": day.isoformat(),
+                "job_ids": batch,
+                "crew_ids": ctx.crew_ids,
+                "time_limit_seconds": 15,
+            },
+            ctx,
+        )
+        if ctx.last_optimizer_output:
+            merged = _merge_optimizer_results(merged, ctx.last_optimizer_output.result)
+            assigned = set(ctx.last_optimizer_output.result.assigned_job_ids)
+            remaining = [j for j in remaining if j not in assigned]
+            last_target = day
+
+    if merged and ctx.last_optimizer_output:
+        ctx.last_optimizer_output = ctx.last_optimizer_output.model_copy(
+            update={"result": merged, "target_date": last_target},
+        )
+    elif remaining:
+        _run_iteration_programmatic(ctx, target_date=ctx.week_start)
+        return
+
+    if not ctx.last_optimizer_output:
+        _run_iteration_programmatic(ctx, target_date=ctx.week_start)
+        return
+
+    execute_tool(
+        "save_schedule_attempt",
+        {
+            "target_date": last_target.isoformat(),
+            "job_ids": all_job_ids,
+            "crew_ids": ctx.crew_ids,
+        },
+        ctx,
+    )
+    execute_tool(
+        "critique_schedule",
+        {
+            "target_date": last_target.isoformat(),
+            "schedule_attempt_id": str(ctx.last_save_output.attempt_id),
+        },
+        ctx,
+    )
 
 
 def _run_iteration_programmatic(
@@ -316,8 +437,14 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
             messages.append({"role": "user", "content": _iteration_user_message(ctx)})
             messages, final_text = _run_tool_loop(ctx, messages, langfuse_span=span)
         else:
-            _run_iteration_programmatic(ctx, target_date=primary_target)
-            final_text = "Programmatic orchestrator iteration (no Anthropic API key)."
+            _run_week_programmatic(ctx)
+            assigned = 0
+            if ctx.last_optimizer_output:
+                assigned = len(ctx.last_optimizer_output.result.assigned_job_ids)
+            final_text = (
+                f"Programmatic week scheduling: {assigned}/{len(job_ids)} jobs assigned "
+                f"across daily optimizer passes."
+            )
             if span:
                 span.event(
                     name="programmatic_iteration",

@@ -7,6 +7,14 @@ from app.routers import chat, data, health, schedules
 
 settings = get_settings()
 
+if settings.langfuse_public_key and settings.langfuse_secret_key:
+    print(
+        f"Langfuse tracing enabled (host={settings.langfuse_host})",
+        flush=True,
+    )
+else:
+    print("Langfuse tracing disabled (missing LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY)", flush=True)
+
 app = FastAPI(
     title=settings.app_name,
     version=__version__,

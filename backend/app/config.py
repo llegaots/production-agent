@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, PostgresDsn
+from pydantic import AliasChoices, Field, PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root: backend/app/config.py → ../../
@@ -49,11 +49,22 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = Field(default=None)
     anthropic_model: str = Field(default="claude-sonnet-4-20250514")
-    orchestrator_max_iterations: int = Field(default=4, ge=1, le=10)
+    orchestrator_max_iterations: int = Field(
+        default=4,
+        ge=1,
+        le=10,
+        validation_alias=AliasChoices(
+            "ORCHESTRATOR_MAX_ITERATIONS",
+            "MAX_CRITIC_ITERATIONS",
+        ),
+    )
 
     langfuse_public_key: str | None = Field(default=None)
     langfuse_secret_key: str | None = Field(default=None)
-    langfuse_host: str = Field(default="https://cloud.langfuse.com")
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
 
 @lru_cache
