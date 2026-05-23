@@ -135,15 +135,15 @@ class SupervisorAgent(Agent):
         await self.geo.run(ctx)
         await self.crew.run(ctx)
 
-        # Phase 2 - parallel sectioning: equipment + time-budget validate
-        # independent aspects of the draft plan. Anthropic's "parallelization
-        # (sectioning)" pattern: each agent focuses on one specific aspect.
+        # Phase 2 - equipment validates draft, then time-budget builds crew-days
+        # from the adjusted draft (sequential so deferrals are respected).
         await ctx.emit(
             self.name,
-            "parallel",
-            "Running Equipment and TimeBudget validators in parallel.",
+            "sequential",
+            "Running Equipment validation, then TimeBudget sequencing.",
         )
-        await asyncio.gather(self.equipment.run(ctx), self.budget.run(ctx))
+        await self.equipment.run(ctx)
+        await self.budget.run(ctx)
 
         # Post Phase 2: evict jobs that EquipmentAgent flagged as unresolvable
         # equipment conflicts from crew_days so no crew is asked to operate

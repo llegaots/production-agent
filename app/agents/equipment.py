@@ -19,6 +19,24 @@ from ..models import EquipmentKind
 from ..storage import store
 from .base import Agent, AgentContext
 
+# Fleet-wide scarce assets: only one job requiring these can run per crew per day.
+_EXCLUSIVE_PER_CREW_DAY: frozenset[EquipmentKind] = frozenset({EquipmentKind.SCISSOR_LIFT})
+
+
+def _fleet_quantity(kind: EquipmentKind) -> int:
+    return sum(eq.quantity for eq in store.list_equipment() if eq.kind == kind)
+
+
+def _crew_carries_kind(crew_id: str, kind: EquipmentKind, crews_by_id: dict) -> bool:
+    crew = crews_by_id.get(crew_id)
+    if not crew:
+        return False
+    for eid in crew.equipment_ids:
+        e = store.get_equipment(eid)
+        if e and e.kind == kind:
+            return True
+    return False
+
 
 class EquipmentAgent(Agent):
     name = "EquipmentAgent"
@@ -115,10 +133,46 @@ class EquipmentAgent(Agent):
                                 if jid not in conflict_deferred
                             ]
 
+        # Same crew / same day: multiple jobs requiring one exclusive asset (e.g. scissor-lift).
+        for entry in draft:
+            crew_id = entry["crew_id"]
+            day = entry["day"]
+            for kind in _EXCLUSIVE_PER_CREW_DAY:
+                if not _crew_carries_kind(crew_id, kind, crews_by_id):
+                    continue
+                needing = [
+                    jid for jid in entry["job_ids"]
+                    if jid not in conflict_deferred
+                    and kind in (jobs_by_id[jid].required_equipment if jobs_by_id.get(jid) else [])
+                ]
+                cap = min(1, _fleet_quantity(kind))
+                if len(needing) <= cap:
+                    continue
+                needing.sort(
+                    key=lambda jid: -(jobs_by_id[jid].price if jobs_by_id.get(jid) else 0),
+                )
+                for jid in needing[cap:]:
+                    if jid in conflict_deferred:
+                        continue
+                    conflict_deferred.append(jid)
+                    conflict_msg = (
+                        f"On {day.isoformat()}, crew {crew_id} has {len(needing)} jobs requiring "
+                        f"{kind.value} but only {cap} unit(s) — deferring {jid}."
+                    )
+                    conflicts.append(conflict_msg)
+                    await ctx.emit(
+                        self.name,
+                        "defer",
+                        f"Job {jid} deferred: {kind.value} double-booked on "
+                        f"{day.isoformat()} for {crew_id}.",
+                    )
+                entry["job_ids"] = [jid for jid in entry["job_ids"] if jid not in conflict_deferred]
+
         # Add conflict-deferred jobs to the unscheduled list so they appear
         # in the plan's unscheduled_job_ids rather than as ghost assignments.
         existing_unscheduled: list[str] = ctx.blackboard.get("unscheduled", [])
         ctx.blackboard["unscheduled"] = existing_unscheduled + conflict_deferred
+        ctx.blackboard["equipment_bumped_jobs"] = list(conflict_deferred)
 
         # per-job equipment fit
         for entry in draft:
