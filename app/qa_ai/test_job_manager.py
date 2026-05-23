@@ -165,6 +165,9 @@ async def insert_test_jobs(
         # Write to Supabase if configured.
         if supabase.enabled:
             try:
+                # required_skills / required_equipment are text[] in Postgres —
+                # pass as plain Python lists; httpx serialises them as JSON arrays
+                # which PostgREST accepts for text[] columns.
                 await supabase.upsert(
                     "jobs",
                     {
@@ -176,17 +179,21 @@ async def insert_test_jobs(
                         "lng": job.lng,
                         "estimated_minutes": job.estimated_minutes,
                         "difficulty": job.difficulty,
-                        "required_skills": [s.value for s in job.required_skills],
+                        "required_skills":    [s.value for s in job.required_skills],
                         "required_equipment": [e.value for e in job.required_equipment],
                         "earliest_date": job.earliest_date.isoformat(),
-                        "latest_date": job.latest_date.isoformat(),
-                        "price": job.price,
+                        "latest_date":   job.latest_date.isoformat(),
+                        "price":  job.price,
                         "status": job.status.value,
-                        "notes": job.notes,
+                        "notes":  job.notes,
                     },
                 )
-            except Exception:
-                pass  # Supabase write failure is non-fatal; in-memory store is sufficient.
+            except Exception as exc:
+                # Supabase write failure is non-fatal; in-memory store is sufficient.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "qa test_job supabase upsert failed for %s: %s", job.id, exc
+                )
 
         inserted.append(job.id)
     return inserted
