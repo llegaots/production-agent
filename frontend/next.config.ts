@@ -46,11 +46,21 @@ const apiUrl =
   rootEnv.NEXT_PUBLIC_API_URL ??
   "http://127.0.0.1:8000";
 
+const backendUrl = apiUrl.replace(/\/$/, "");
+
 const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseBrowserKey,
-    NEXT_PUBLIC_API_URL: apiUrl,
+    NEXT_PUBLIC_API_URL: backendUrl,
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${backendUrl}/:path*`,
+      },
+    ];
   },
 };
 

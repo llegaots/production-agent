@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { getApiBase } from "@/lib/api-base";
 
 export type SseHandler = (event: string, data: Record<string, unknown>) => void;
 
@@ -8,7 +8,7 @@ export async function streamChatMessage(
   content: string,
   onEvent: SseHandler,
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/chat/sessions/${sessionId}/messages`, {
+  const res = await fetch(`${getApiBase()}/chat/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -18,7 +18,10 @@ export async function streamChatMessage(
   });
 
   if (!res.ok) {
-    throw new Error(`Chat stream failed: ${res.status}`);
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      detail ? `Chat stream failed (${res.status}): ${detail.slice(0, 200)}` : `Chat stream failed: ${res.status}`,
+    );
   }
 
   const reader = res.body?.getReader();
@@ -52,7 +55,7 @@ export async function streamChatMessage(
 }
 
 export async function approveSchedule(scheduleRunId: string) {
-  const res = await fetch(`${API_URL}/schedules/${scheduleRunId}/approve`, {
+  const res = await fetch(`${getApiBase()}/schedules/${scheduleRunId}/approve`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Approve failed: ${res.status}`);
@@ -60,7 +63,7 @@ export async function approveSchedule(scheduleRunId: string) {
 }
 
 export async function rejectSchedule(scheduleRunId: string) {
-  const res = await fetch(`${API_URL}/schedules/${scheduleRunId}/reject`, {
+  const res = await fetch(`${getApiBase()}/schedules/${scheduleRunId}/reject`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Reject failed: ${res.status}`);
