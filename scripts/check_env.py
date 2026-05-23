@@ -7,7 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
-REQUIRED = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_DB_URL")
+REQUIRED = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
+OPTIONAL_FOR_POSTGRES = ("SUPABASE_DB_URL",)
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -38,8 +39,12 @@ def main() -> int:
     if ref not in url:
         print(f"Warning: SUPABASE_URL does not contain project ref {ref}")
 
+    missing_db = [k for k in OPTIONAL_FOR_POSTGRES if not env.get(k)]
     print(f"OK — .env found with {len(REQUIRED)} required keys (values hidden).")
-    print("Run: python scripts/verify_connections.py")
+    if missing_db:
+        print(f"Note: missing {', '.join(missing_db)} — Postgres health check will not run.")
+    else:
+        print("Run: python scripts/verify_connections.py")
     return 0
 
 
