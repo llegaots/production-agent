@@ -138,7 +138,7 @@ export function SchedulePreviewTable({ preview, onDecision }: Props) {
                   </td>
                 </tr>
               ) : (
-                preview.routes.map((route) => (
+                preview.routes.filter((route) => route.stops.length > 0).map((route) => (
                   <tr key={route.crew_id} className="border-b align-top">
                     <td className="p-2 font-medium whitespace-nowrap">
                       {crews[route.crew_id]?.name ?? route.crew_id}

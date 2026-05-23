@@ -43,6 +43,10 @@ class ScheduleWeekInput(BaseModel):
         default=None,
         description="Primary optimizer day; defaults to week_start",
     )
+    single_day_preview: bool = Field(
+        default=False,
+        description="Chat/fast mode: one day, one optimizer pass (not full Mon–Fri batching)",
+    )
 
 
 class ScheduleIterationSummary(BaseModel):

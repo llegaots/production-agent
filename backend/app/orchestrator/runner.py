@@ -436,6 +436,19 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
         if use_anthropic:
             messages.append({"role": "user", "content": _iteration_user_message(ctx)})
             messages, final_text = _run_tool_loop(ctx, messages, langfuse_span=span)
+        elif inp.single_day_preview:
+            _run_iteration_programmatic(ctx, target_date=primary_target)
+            assigned = 0
+            if ctx.last_optimizer_output:
+                assigned = len(ctx.last_optimizer_output.result.assigned_job_ids)
+            final_text = (
+                f"Day preview for {primary_target}: {assigned}/{len(job_ids)} jobs assigned."
+            )
+            if span:
+                span.event(
+                    name="single_day_preview",
+                    metadata={"assigned": assigned, "target_date": str(primary_target)},
+                )
         else:
             _run_week_programmatic(ctx)
             assigned = 0

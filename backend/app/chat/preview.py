@@ -27,6 +27,17 @@ def _load_attempt_optimizer_result(attempt_id: UUID | None) -> dict[str, Any]:
     return row[0].get("optimizer_result") or {}
 
 
+def _assigned_job_ids_from_opt(opt: dict) -> list[str]:
+    if opt.get("assigned_job_ids"):
+        return list(opt["assigned_job_ids"])
+    return [
+        stop["job_id"]
+        for route in opt.get("routes") or []
+        for stop in route.get("stops") or []
+        if stop.get("job_id")
+    ]
+
+
 def build_schedule_preview(result: ScheduleRunResult) -> SchedulePreviewPayload:
     attempt_id = result.final_schedule_attempt_id or result.best_schedule_attempt_id
     opt = _load_attempt_optimizer_result(attempt_id)
@@ -45,8 +56,8 @@ def build_schedule_preview(result: ScheduleRunResult) -> SchedulePreviewPayload:
         iteration_count=result.iteration_count,
         summary=result.summary,
         attempt_id=str(attempt_id) if attempt_id else None,
-        assigned_job_ids=list(opt.get("assigned_job_ids") or []),
+        assigned_job_ids=_assigned_job_ids_from_opt(opt),
         unassigned_job_ids=list(opt.get("unassigned_job_ids") or []),
-        routes=list(opt.get("routes") or []),
+        routes=[r for r in (opt.get("routes") or []) if r.get("stops")],
         issues=issues,
     )

@@ -37,13 +37,22 @@ def _emit_text_chunks(text: str) -> Iterator[str]:
         yield _sse("text_delta", {"text": text[i : i + step]})
 
 
+def _run_scheduling_with_progress(
+    tool_input: dict[str, Any],
+) -> Iterator[str | dict[str, Any]]:
+    """Yield SSE status lines, then the tool result dict."""
+    yield _sse("status", {"message": "Loading jobs and crews…"})
+    yield _sse("status", {"message": "Running optimizer (about 30–60 seconds)…"})
+    result = execute_scheduling_tool(tool_input, use_orchestrator_agent=False)
+    yield _sse("status", {"message": "Building schedule preview…"})
+    yield result
+
+
 def _fallback_stream(
     session_id: UUID,
     user_text: str,
-    *,
-    use_orchestrator_agent: bool | None,
 ) -> Iterator[str]:
-    """Deterministic assistant when Anthropic is unavailable (CI / rate limits)."""
+    """Deterministic assistant when Anthropic is unavailable."""
     assistant_text = ""
     tool_calls: list[dict[str, Any]] = []
     schedule_preview: dict[str, Any] | None = None
@@ -51,14 +60,24 @@ def _fallback_stream(
 
     if wants_scheduling(user_text):
         tool_id = f"toolu_{uuid.uuid4().hex[:12]}"
-        tool_input = {"user_request": user_text, "max_iterations": 2}
+        tool_input = {
+            "user_request": user_text,
+            "max_iterations": 1,
+        }
         tool_calls.append({"id": tool_id, "name": "run_scheduling_orchestrator", "input": tool_input})
         yield _sse(
             "tool_call",
             {"id": tool_id, "name": "run_scheduling_orchestrator", "input": tool_input},
         )
 
-        result = execute_scheduling_tool(tool_input, use_orchestrator_agent=use_orchestrator_agent)
+        result: dict[str, Any] | None = None
+        for item in _run_scheduling_with_progress(tool_input):
+            if isinstance(item, str):
+                yield item
+            else:
+                result = item
+        assert result is not None
+
         yield _sse("tool_result", {"tool_use_id": tool_id, "result": result})
         schedule_preview = result.get("schedule_preview")
         if schedule_preview:
@@ -67,17 +86,17 @@ def _fallback_stream(
 
         status = result.get("status", "unknown")
         assistant_text = (
-            f"I ran the scheduling orchestrator for your request. Status: {status}. "
+            f"I ran the scheduler for your request. Status: {status}. "
             f"{result.get('summary', '')} "
         )
         if result.get("approved"):
             assistant_text += "The critic approved this plan — you can confirm with Approve."
         else:
-            assistant_text += "Please review the schedule preview and approve or reject."
+            assistant_text += "Review the schedule preview below and approve or reject."
     else:
         assistant_text = (
             'I can help you schedule crews. Try: "Schedule next week\'s jobs" '
-            "and I will run the orchestrator."
+            "and I will run the optimizer."
         )
 
     yield from _emit_text_chunks(assistant_text)
@@ -92,12 +111,7 @@ def _fallback_stream(
     yield _sse("message_complete", {"message_id": str(saved.id), "role": "assistant"})
 
 
-def _stream_anthropic_turn(
-    session_id: UUID,
-    user_text: str,
-    *,
-    use_orchestrator_agent: bool | None,
-) -> Iterator[str]:
+def _stream_anthropic_turn(session_id: UUID, user_text: str) -> Iterator[str]:
     settings = get_settings()
     client = Anthropic(api_key=settings.anthropic_api_key, timeout=120.0)
     messages = messages_for_anthropic(session_id)
@@ -139,7 +153,13 @@ def _stream_anthropic_turn(
 
                 if block.name == "run_scheduling_orchestrator":
                     inp = block.input if isinstance(block.input, dict) else {}
-                    result = execute_scheduling_tool(inp, use_orchestrator_agent=use_orchestrator_agent)
+                    result: dict[str, Any] | None = None
+                    for item in _run_scheduling_with_progress(inp):
+                        if isinstance(item, str):
+                            yield item
+                        else:
+                            result = item
+                    assert result is not None
                 else:
                     result = {"error": f"Unknown tool: {block.name}"}
                 yield _sse("tool_result", {"tool_use_id": block.id, "result": result})
@@ -181,7 +201,7 @@ def _stream_anthropic_turn(
         yield _sse("message_complete", {"message_id": str(saved.id), "role": "assistant"})
         return
 
-    yield from _fallback_stream(session_id, user_text, use_orchestrator_agent=use_orchestrator_agent)
+    yield from _fallback_stream(session_id, user_text)
 
 
 def stream_chat_turn(
@@ -190,20 +210,19 @@ def stream_chat_turn(
 ) -> Iterator[str]:
     insert_message(session_id, role="user", content=req.content)
 
+    # Immediate feedback so the UI is not blank while scheduling runs.
+    yield _sse("status", {"message": "Message received…"})
+
     settings = get_settings()
+    if wants_scheduling(req.content):
+        yield from _fallback_stream(session_id, req.content)
+        return
+
     if settings.anthropic_api_key:
         try:
-            yield from _stream_anthropic_turn(
-                session_id,
-                req.content,
-                use_orchestrator_agent=req.use_orchestrator_agent,
-            )
+            yield from _stream_anthropic_turn(session_id, req.content)
             return
         except Exception as exc:
-            yield _sse("error", {"message": str(exc), "fallback": True})
+            yield _sse("error", {"message": str(exc)})
 
-    yield from _fallback_stream(
-        session_id,
-        req.content,
-        use_orchestrator_agent=req.use_orchestrator_agent,
-    )
+    yield from _fallback_stream(session_id, req.content)
