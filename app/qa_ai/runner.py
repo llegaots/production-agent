@@ -68,10 +68,6 @@ class AIQATeamRunner:
         succeeded_history = fingerprints_for_prompt()
         case_results: list[dict[str, Any]] = []
         failed_fingerprints: list[dict] = []
-        # Always plan against the seed data week so that date-window filters
-        # let seed jobs through.  _next_monday() returns a May date when run
-        # today, which is before all seed jobs' earliest_date (July 6), so the
-        # planner would correctly filter out every job and return an empty plan.
         week_start = SEED_WEEK_START
         llm_errors: list[str] = []
 
@@ -119,7 +115,9 @@ class AIQATeamRunner:
                     detail={"steps": case.get("steps")},
                 )
                 if iteration == 1:
-                    exec_result = await execute_case(case, week_start=week_start)
+                    exec_result = await execute_case(
+                        case, week_start=week_start, run_id=self.audit.run_id
+                    )
                 else:
                     retry = (prior_critique or {}).get("owner_retry")
                     if not retry:

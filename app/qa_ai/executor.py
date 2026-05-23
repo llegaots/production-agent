@@ -9,10 +9,11 @@ from ..agents.supervisor import _next_monday
 from ..models import PlanResult
 from ..reorganize import parse_reorganize_instruction
 from ..scheduling_prefs import SchedulingMode, parse_mode
-from ..seed import seed
+from ..seed import seed, SEED_WEEK_START
 from ..storage import store
 from ..supabase_store import persist_plan
 from .schedule_snapshot import plan_result_context
+from .test_job_manager import delete_test_jobs, insert_test_jobs
 
 
 class CaseExecutionResult:
@@ -40,13 +41,26 @@ async def execute_case(
     *,
     week_start: Optional[date] = None,
     reset_seed: bool = True,
+    run_id: str = "qa",
 ) -> CaseExecutionResult:
-    ws = week_start or _next_monday()
+    ws = week_start or SEED_WEEK_START
     out = CaseExecutionResult()
 
-    setup = case.get("setup") or {}
-    if reset_seed or setup.get("reset_seed", True):
-        seed(reset=True)
+    # Always reset to a clean known state before each case.
+    seed(reset=True)
+
+    # If the case designer provided custom test jobs, insert them into the
+    # store AND Supabase so the scheduler sees them as real persisted jobs.
+    test_job_defs = case.get("test_jobs") or []
+    inserted_job_ids: list[str] = []
+    if test_job_defs:
+        inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+        out.events.append({
+            "step": -1,
+            "action": "test_jobs_inserted",
+            "count": len(inserted_job_ids),
+            "ids": inserted_job_ids,
+        })
 
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
@@ -152,6 +166,11 @@ async def execute_case(
 
     if not out.final_plan and plan:
         out.final_plan = plan
+
+    # Clean up test jobs from store and Supabase after the case completes.
+    if inserted_job_ids:
+        await delete_test_jobs(inserted_job_ids)
+
     return out
 
 

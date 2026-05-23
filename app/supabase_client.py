@@ -113,5 +113,18 @@ class SupabaseClient:
             )
             r.raise_for_status()
 
+    async def delete_where(self, table: str, column: str, values: list[str]) -> None:
+        """Delete rows where `column` is in `values` (uses PostgREST `in` filter)."""
+        if not values:
+            return
+        in_filter = f"({','.join(values)})"
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            r = await cli.delete(
+                self._table_url(table),
+                headers=self._headers(),
+                params={column: f"in.{in_filter}"},
+            )
+            r.raise_for_status()
+
 
 supabase = SupabaseClient()
