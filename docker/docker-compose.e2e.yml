@@ -1,0 +1,24 @@
+# Isolated PostGIS for orchestrator E2E (no dev/prod Supabase data).
+# Usage:
+#   docker compose -f docker/docker-compose.e2e.yml up -d
+#   export E2E_DATABASE_URL=postgresql://postgres:e2e@localhost:5433/production_agent_e2e
+#   bash scripts/e2e_apply_migrations.sh
+services:
+  e2e-postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: production_agent_e2e
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d production_agent_e2e"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - e2e_pgdata:/var/lib/postgresql/data
+
+volumes:
+  e2e_pgdata:
