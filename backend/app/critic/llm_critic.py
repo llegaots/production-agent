@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
-from app.critic.schemas import CriticVerdict, DeterministicMetrics, ReviewScheduleInput
+from app.critic.schemas import CriticIssue, CriticVerdict, DeterministicMetrics, ReviewScheduleInput
 
 
 def _rule_based_verdict(
@@ -48,7 +48,12 @@ def _rule_based_verdict(
                 actions.append("Reduce travel by swapping jobs between crews or adding a nearer crew.")
         feedback = "Revise the plan: " + " ".join(actions) if actions else "Fix flagged metrics and re-run the optimizer."
 
-    return CriticVerdict(approved=approved, issues=issues, feedback_prompt=feedback)
+    return CriticVerdict(
+        approved=approved,
+        issues=issues,
+        structured_issues=list(metrics.structured_issues),
+        feedback_prompt=feedback,
+    )
 
 
 def _build_user_payload(
@@ -152,11 +157,18 @@ def _call_anthropic(
         return verdict
 
     # Merge deterministic issues the LLM may have missed
-    merged_issues = list(dict.fromkeys(metrics.deterministic_issues + verdict.issues))
+    merged_messages = list(dict.fromkeys(metrics.deterministic_issues + verdict.issues))
+    merged_structured = list(metrics.structured_issues)
+    for msg in verdict.issues:
+        if msg not in metrics.deterministic_issues:
+            merged_structured.append(
+                CriticIssue(type="preference_violation", severity="medium", message=msg)
+            )
     approved = verdict.approved and not metrics.deterministic_issues
     return CriticVerdict(
         approved=approved,
-        issues=merged_issues,
+        issues=merged_messages,
+        structured_issues=merged_structured,
         feedback_prompt=verdict.feedback_prompt,
     )
 

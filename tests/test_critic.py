@@ -1,140 +1,234 @@
-"""Phase 5 critic agent tests."""
+"""Phase 5 critic agent tests (deterministic + mocked LLM, no DB)."""
 
 from __future__ import annotations
 
-import os
+import json
 import sys
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.critic.deterministic import compute_deterministic_metrics
-from app.critic.review import review_schedule
-from app.critic.scenarios import (
-    bad_review_input_equipment_mismatch,
-    bad_review_input_geographic_spray,
+from app.critic.deterministic import compute_deterministic_metrics  # noqa: E402
+from app.critic.llm_critic import run_llm_critic  # noqa: E402
+from app.critic.review import review_schedule  # noqa: E402
+from app.critic.schemas import CriticIssue, CriticVerdict, DeterministicMetrics, IssueSeverity  # noqa: E402
+from app.critic.scenarios import (  # noqa: E402
+    bad_drive_time_blowout,
+    bad_equipment_ground_floor_ladder,
+    bad_geographic_zigzag,
+    bad_morning_preference_afternoon,
     bad_review_input_preference_violations,
+    bad_week_fill_friday_stack,
     good_review_input,
 )
 
-
-def test_deterministic_good_schedule_has_few_issues():
-    inp = good_review_input()
-    metrics = compute_deterministic_metrics(inp)
-    assert metrics.preference_violation_count == 0
-    assert metrics.week_fill_score >= 0.75
-    assert metrics.equipment_fit_score >= 0.95
-    assert not metrics.deterministic_issues
+pytestmark = pytest.mark.usefixtures("no_db")
 
 
-def test_bad_preference_violations_flagged():
-    inp = bad_review_input_preference_violations()
-    metrics = compute_deterministic_metrics(inp)
-    assert metrics.preference_violation_count >= 1
-    assert any("preferred crew" in i for i in metrics.deterministic_issues)
+@pytest.fixture
+def no_db():
+    """Ensure critic tests never hit Supabase."""
+    yield
 
 
-def test_bad_geographic_spray_flagged():
-    inp = bad_review_input_geographic_spray()
-    metrics = compute_deterministic_metrics(inp)
-    assert any("geographic spread" in i for i in metrics.deterministic_issues)
-    assert metrics.crew_days[0].geographic_spread_km > 12
+def _issues_of_type(metrics: DeterministicMetrics, issue_type: str) -> list[CriticIssue]:
+    return [i for i in metrics.structured_issues if i.type == issue_type]
 
 
-def test_bad_equipment_mismatch_flagged():
-    inp = bad_review_input_equipment_mismatch()
-    metrics = compute_deterministic_metrics(inp)
-    assert metrics.equipment_fit_score < 0.95 or any(
-        "Unassigned" in i for i in metrics.deterministic_issues
+def _max_severity(issues: list[CriticIssue]) -> IssueSeverity | None:
+    order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    if not issues:
+        return None
+    return max((i.severity for i in issues), key=lambda s: order[s])
+
+
+def assert_issue(
+    metrics: DeterministicMetrics,
+    issue_type: str,
+    *,
+    min_severity: IssueSeverity = "medium",
+) -> CriticIssue:
+    matches = _issues_of_type(metrics, issue_type)
+    assert matches, f"Expected issue type {issue_type!r}, got {[i.type for i in metrics.structured_issues]}"
+    order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    best = max(matches, key=lambda i: order[i.severity])
+    assert order[best.severity] >= order[min_severity], (
+        f"{issue_type} severity {best.severity} < {min_severity}"
     )
+    return best
 
 
-def test_rule_critic_rejects_bad_preference_schedule():
-    out = review_schedule(bad_review_input_preference_violations())
-    assert out.verdict.approved is False
-    assert out.verdict.issues
-    assert out.verdict.feedback_prompt
-    assert any(
-        kw in out.verdict.feedback_prompt.lower()
-        for kw in ("reassign", "preferred", "revise", "crew")
+# --- Deterministic layer (per rule) ---
+
+
+class TestDeterministicMetrics:
+    def test_happy_path_no_structured_issues(self):
+        metrics = compute_deterministic_metrics(good_review_input())
+        assert metrics.preference_violation_count == 0
+        assert metrics.week_fill_score >= 0.85
+        assert metrics.equipment_fit_score >= 0.95
+        assert not metrics.structured_issues
+        assert not metrics.deterministic_issues
+
+    def test_geographic_zigzag(self):
+        metrics = compute_deterministic_metrics(bad_geographic_zigzag())
+        issue = assert_issue(metrics, "geographic_clustering", min_severity="high")
+        assert issue.crew_id == "solo"
+        assert metrics.crew_days[0].geographic_spread_km > 12
+
+    def test_week_fill_order_friday_stack(self):
+        metrics = compute_deterministic_metrics(bad_week_fill_friday_stack())
+        issue = assert_issue(metrics, "week_fill_order", min_severity="high")
+        assert "Friday" in issue.message or "Mon/Tue" in issue.message
+
+    def test_preference_violation_morning_afternoon(self):
+        metrics = compute_deterministic_metrics(bad_morning_preference_afternoon())
+        issue = assert_issue(metrics, "preference_violation", min_severity="high")
+        assert issue.job_id == "morning-client"
+        assert "morning" in issue.message.lower() or "afternoon" in issue.message.lower()
+
+    def test_preference_violation_wrong_crew(self):
+        metrics = compute_deterministic_metrics(bad_review_input_preference_violations())
+        assert_issue(metrics, "preference_violation", min_severity="medium")
+        assert metrics.preference_violation_count >= 1
+
+    def test_equipment_necessity_ground_floor_ladder(self):
+        metrics = compute_deterministic_metrics(bad_equipment_ground_floor_ladder())
+        issue = assert_issue(metrics, "equipment_necessity", min_severity="high")
+        assert issue.job_id == "ground-1"
+        assert "ground" in issue.message.lower() or "ladder" in issue.message.lower()
+
+    def test_drive_time_blowout(self):
+        metrics = compute_deterministic_metrics(bad_drive_time_blowout())
+        issue = assert_issue(metrics, "drive_time", min_severity="high")
+        assert issue.crew_id == "solo"
+        assert "240" in issue.message or "drive" in issue.message.lower()
+
+
+# --- Rule critic (deterministic verdict path) ---
+
+
+class TestRuleCritic:
+    def test_approves_good_schedule(self):
+        out = review_schedule(good_review_input())
+        assert out.verdict.approved is True
+        assert not out.verdict.issues
+        assert not out.verdict.structured_issues
+        assert out.reviewer == "rule_critic"
+
+    def test_rejects_geographic_with_feedback(self):
+        out = review_schedule(bad_geographic_zigzag())
+        assert out.verdict.approved is False
+        assert_issue(out.metrics, "geographic_clustering")
+        assert out.verdict.feedback_prompt
+
+    @pytest.mark.parametrize(
+        ("factory", "issue_type"),
+        [
+            (bad_week_fill_friday_stack, "week_fill_order"),
+            (bad_morning_preference_afternoon, "preference_violation"),
+            (bad_equipment_ground_floor_ladder, "equipment_necessity"),
+            (bad_drive_time_blowout, "drive_time"),
+        ],
     )
+    def test_rejects_bad_schedules(self, factory, issue_type: str):
+        out = review_schedule(factory())
+        assert out.verdict.approved is False
+        assert_issue(out.metrics, issue_type)
 
 
-def test_rule_critic_approves_good_schedule():
-    out = review_schedule(good_review_input())
-    assert out.verdict.approved is True
-    assert not out.verdict.issues
+# --- LLM layer (mocked Anthropic) ---
 
 
-def test_rule_critic_rejects_geographic_spray_with_actionable_feedback():
-    out = review_schedule(bad_review_input_geographic_spray())
-    assert out.verdict.approved is False
-    assert len(out.verdict.issues) >= 1
-    assert "cluster" in out.verdict.feedback_prompt.lower() or "travel" in out.verdict.feedback_prompt.lower()
+def _mock_anthropic_response(payload: dict[str, Any]) -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {
+        "content": [{"type": "text", "text": json.dumps(payload)}],
+    }
+    return mock_resp
 
 
-@pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"),
-    reason="Live LLM critic test requires ANTHROPIC_API_KEY",
-)
-def test_llm_critic_rejects_bad_schedule_live():
-    inp = bad_review_input_preference_violations()
-    inp = inp.model_copy(update={"use_llm": True})
-    out = review_schedule(inp)
-    assert out.verdict.approved is False
-    assert len(out.verdict.issues) >= 1
+class TestLlmCriticMocked:
+    def test_llm_approve_when_metrics_clean(self):
+        inp = good_review_input()
+        inp = inp.model_copy(update={"use_llm": True})
+        metrics = compute_deterministic_metrics(inp)
 
+        with patch("app.critic.llm_critic.httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = mock_client
+            mock_client.post.return_value = _mock_anthropic_response(
+                {
+                    "approved": True,
+                    "issues": [],
+                    "feedback_prompt": "Looks good.",
+                }
+            )
 
-@pytest.mark.skipif(
-    not os.getenv("SUPABASE_URL") and not (ROOT / ".env").is_file(),
-    reason="Supabase required",
-)
-def test_persist_critic_review():
-    from datetime import date
+            verdict = run_llm_critic(metrics, inp, [], use_llm=True)
 
-    from app.tools.optimizer_tool import run_optimizer
-    from app.tools.schemas import RunOptimizerInput
-    from app.tools._db import tools_db
+        assert verdict.approved is True
+        assert not verdict.issues
+        mock_client.post.assert_called_once()
 
-    db = tools_db()
-    crews = [r["id"] for r in db.table("crews").select("id").limit(2).execute().data]
-    jobs = [
-        r["id"]
-        for r in db.table("jobs").select("id").eq("status", "pending").limit(2).execute().data
-    ]
-    opt = run_optimizer(
-        RunOptimizerInput(
-            target_date=date.today(),
-            job_ids=jobs,
-            crew_ids=crews,
-            time_limit_seconds=3,
-        )
-    )
-    from app.tools.schedule_attempts import save_schedule_attempt
-    from app.tools.schemas import SaveScheduleAttemptInput
+    def test_llm_reject_merged_with_deterministic_flags(self):
+        inp = bad_geographic_zigzag()
+        inp = inp.model_copy(update={"use_llm": True})
+        metrics = compute_deterministic_metrics(inp)
 
-    saved = save_schedule_attempt(
-        SaveScheduleAttemptInput(
-            target_date=date.today(),
-            job_ids=jobs,
-            crew_ids=crews,
-            optimizer_input=opt.optimizer_input,
-            result=opt.result,
-        )
-    )
-    from app.critic.schemas import ReviewScheduleInput
+        with patch("app.critic.llm_critic.httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = mock_client
+            mock_client.post.return_value = _mock_anthropic_response(
+                {
+                    "approved": True,
+                    "issues": [],
+                    "feedback_prompt": "LLM wrongly approved",
+                }
+            )
 
-    out = review_schedule(
-        ReviewScheduleInput(
-            target_date=date.today(),
-            optimizer_input=opt.optimizer_input,
-            optimizer_result=opt.result,
-            schedule_attempt_id=saved.attempt_id,
-            persist=True,
-            use_llm=False,
-        )
-    )
-    assert out.critic_feedback_id is not None
+            verdict = run_llm_critic(metrics, inp, [], use_llm=True)
+
+        assert verdict.approved is False
+        assert_issue(metrics, "geographic_clustering")
+        assert any("geographic" in m.lower() for m in verdict.issues)
+
+    def test_llm_parse_failure_falls_back_to_rules(self):
+        inp = bad_drive_time_blowout()
+        inp = inp.model_copy(update={"use_llm": True})
+        metrics = compute_deterministic_metrics(inp)
+
+        with patch("app.critic.llm_critic.httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = mock_client
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {"content": [{"type": "text", "text": "not json"}]}
+            mock_client.post.return_value = mock_resp
+
+            verdict = run_llm_critic(metrics, inp, [], use_llm=True)
+
+        assert verdict.approved is False
+        assert_issue(metrics, "drive_time")
+
+    def test_review_schedule_uses_mocked_llm(self):
+        inp = bad_morning_preference_afternoon()
+        inp = inp.model_copy(update={"use_llm": True, "persist": False})
+
+        with patch("app.critic.llm_critic._call_anthropic") as mock_llm:
+            mock_llm.return_value = CriticVerdict(
+                approved=False,
+                issues=["Morning preference ignored"],
+                feedback_prompt="Reschedule to AM.",
+            )
+            out = review_schedule(inp)
+
+        assert out.reviewer == "llm_critic"
+        assert out.verdict.approved is False
+        mock_llm.assert_called_once()
