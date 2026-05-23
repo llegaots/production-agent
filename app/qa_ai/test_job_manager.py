@@ -13,9 +13,11 @@ import json
 from datetime import date
 from typing import Any, Optional
 
+from ..geocode import geocoder
 from ..models import EquipmentKind, Job, JobStatus, ServiceType, Skill
 from ..storage import store
 from ..supabase_client import supabase
+from ..supabase_store import persist_job_location
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -91,6 +93,83 @@ def _parse_date(raw: Any, fallback: date) -> date:
         return date.fromisoformat(str(raw))
     except Exception:
         return fallback
+
+
+# West Island neighbourhood centroids for fallback when Google API unavailable in CI.
+_NEIGHBORHOOD_COORDS: list[tuple[str, float, float]] = [
+    ("pointe-claire", 45.4460, -73.8280),
+    ("beaconsfield", 45.4340, -73.8620),
+    ("kirkland", 45.4530, -73.8700),
+    ("dollard", 45.4920, -73.8230),
+    ("dorval", 45.4520, -73.7450),
+    ("pincourt", 45.3760, -73.9850),
+    ("vaudreuil", 45.4010, -74.0350),
+    ("baie-d'urfé", 45.4580, -73.9150),
+    ("baie-d'urfe", 45.4580, -73.9150),
+    ("ile-perrot", 45.3820, -73.9380),
+    ("île-perrot", 45.3820, -73.9380),
+]
+
+
+def _neighborhood_fallback(address: str) -> tuple[float, float] | None:
+    lower = (address or "").lower()
+    for hint, lat, lng in _NEIGHBORHOOD_COORDS:
+        if hint in lower:
+            return lat, lng
+    return None
+
+
+async def geocode_test_job(job: Job) -> dict[str, Any]:
+    """Verify job address via Google Geocoding; persist coords to store + Supabase."""
+    import logging
+    log = logging.getLogger(__name__)
+
+    result = await geocoder.geocode(job.address)
+    record: dict[str, Any] = {
+        "job_id": job.id,
+        "input_address": job.address,
+        **result.to_dict(),
+    }
+
+    if result.success and result.lat is not None and result.lng is not None:
+        job.lat = result.lat
+        job.lng = result.lng
+        if result.formatted_address:
+            job.address = result.formatted_address
+        conf = int(result.confidence * 100)
+        job.notes = (job.notes or "").rstrip() + f" [geocoded {conf}% via {result.source}]"
+    else:
+        fb = _neighborhood_fallback(job.address)
+        if fb:
+            job.lat, job.lng = fb
+            record["fallback_neighborhood"] = True
+            record["lat"] = job.lat
+            record["lng"] = job.lng
+            record["success"] = True
+            record["source"] = "neighborhood_fallback"
+            record["needs_review"] = True
+            job.notes = (job.notes or "").rstrip() + " [geocode fallback: neighbourhood centroid]"
+            log.warning("qa geocode failed for %s — using neighbourhood fallback", job.id)
+        else:
+            log.warning("qa geocode failed for %s: %s", job.id, result.issues)
+
+    store.jobs[job.id] = job
+    if supabase.enabled and (result.success or record.get("fallback_neighborhood")):
+        try:
+            await persist_job_location(
+                job.id,
+                job.lat,
+                job.lng,
+                job.address,
+                geocode_confidence=result.confidence if result.success else 0.5,
+            )
+        except Exception as exc:
+            log.warning("qa persist_job_location failed for %s: %s", job.id, exc)
+
+    record["final_lat"] = job.lat
+    record["final_lng"] = job.lng
+    record["final_address"] = job.address
+    return record
 
 
 # ── Supabase reference sync ───────────────────────────────────────────────────
@@ -195,8 +274,8 @@ def build_test_job(job_def: dict, run_id: str, week_start: date) -> Optional[Job
             client_id=client_id,
             service_type=_parse_service(job_def.get("service_type", "window_cleaning")),
             address=str(job_def.get("address", "Test address, Montreal QC")),
-            lat=float(job_def.get("lat", 45.45)),
-            lng=float(job_def.get("lng", -73.87)),
+            lat=float(job_def.get("lat", 0.0)),
+            lng=float(job_def.get("lng", 0.0)),
             estimated_minutes=int(job_def.get("estimated_minutes", 90)),
             difficulty=min(5, max(1, int(job_def.get("difficulty", 2)))),
             required_skills=_parse_skills(job_def.get("required_skills") or []),
@@ -216,26 +295,28 @@ async def insert_test_jobs(
     job_defs: list[dict],
     run_id: str,
     week_start: date,
-) -> list[str]:
-    """Build jobs from definitions, write to store + Supabase. Returns inserted IDs."""
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Build jobs, geocode addresses, write to store + Supabase. Returns (ids, geocode_log)."""
     if supabase.enabled:
         await ensure_supabase_reference_data()
 
     inserted: list[str] = []
+    geocode_log: list[dict[str, Any]] = []
     for jd in job_defs:
         job = build_test_job(jd, run_id, week_start)
         if not job:
             continue
 
-        # Write to in-memory store.
+        # Real geocoding before persist — each job gets distinct verified coordinates.
+        geo = await geocode_test_job(job)
+        geocode_log.append(geo)
+
+        # Write to in-memory store (geocode_test_job already updated coords).
         store.jobs[job.id] = job
 
         # Write to Supabase if configured.
         if supabase.enabled:
             try:
-                # required_skills / required_equipment are text[] in Postgres —
-                # pass as plain Python lists; httpx serialises them as JSON arrays
-                # which PostgREST accepts for text[] columns.
                 await supabase.upsert(
                     "jobs",
                     {
@@ -257,14 +338,13 @@ async def insert_test_jobs(
                     },
                 )
             except Exception as exc:
-                # Supabase write failure is non-fatal; in-memory store is sufficient.
                 import logging
                 logging.getLogger(__name__).warning(
                     "qa test_job supabase upsert failed for %s: %s", job.id, exc
                 )
 
         inserted.append(job.id)
-    return inserted
+    return inserted, geocode_log
 
 
 async def delete_test_jobs(job_ids: list[str]) -> None:

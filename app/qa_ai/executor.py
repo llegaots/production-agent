@@ -65,46 +65,6 @@ async def execute_case(
 
     _llm.chat = _noop
 
-    from ..geocode import geocoder as _geocoder
-    _original_geocode = _geocoder.geocode
-
-    async def _fast_geocode(address: str):
-        from ..geocode import GeocodeResult
-        from ..seed import BASE_LAT, BASE_LNG
-
-        for j in store.list_jobs():
-            if j.address == address:
-                return GeocodeResult(
-                    input_address=address,
-                    success=True,
-                    lat=j.lat,
-                    lng=j.lng,
-                    formatted_address=address,
-                    confidence=0.9,
-                    needs_review=False,
-                    in_service_area=True,
-                    location_type="ROOFTOP",
-                    postal_code="H9X",
-                    province="QC",
-                    source="cache",
-                )
-        return GeocodeResult(
-            input_address=address,
-            success=True,
-            lat=BASE_LAT,
-            lng=BASE_LNG,
-            formatted_address=address,
-            confidence=0.8,
-            needs_review=False,
-            in_service_area=True,
-            location_type="APPROXIMATE",
-            postal_code="H9X",
-            province="QC",
-            source="cache",
-        )
-
-    _geocoder.geocode = _fast_geocode
-
     test_job_defs = case.get("test_jobs") or []
     inserted_job_ids: list[str] = []
 
@@ -113,13 +73,14 @@ async def execute_case(
             out.events.append({"step": -1, "action": "error", "error": "no_test_jobs"})
             return out
 
-        inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+        inserted_job_ids, geocode_log = await insert_test_jobs(test_job_defs, run_id, ws)
         out.inserted_job_ids = inserted_job_ids
         out.events.append({
             "step": -1,
             "action": "test_jobs_inserted",
             "count": len(inserted_job_ids),
             "ids": inserted_job_ids,
+            "geocoded": geocode_log,
         })
 
         for jid in inserted_job_ids:
@@ -143,6 +104,7 @@ async def execute_case(
                 out.plan_results.append(plan)
                 out.final_plan = plan
                 store.set_plan(plan)
+                _refresh_job_lookup(out)
                 evt["scheduling_mode"] = mode.value
 
             elif action == "reorganize":
@@ -167,6 +129,7 @@ async def execute_case(
                     )
                     plan = store.get_plan()
                     out.final_plan = plan
+                    _refresh_job_lookup(out)
                     evt["reschedule"] = {
                         "succeeded": res.succeeded,
                         "new_day": res.new_day.isoformat() if res.new_day else None,
@@ -177,6 +140,7 @@ async def execute_case(
                     plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
                     out.plan_results.append(plan)
                     out.final_plan = plan
+                    _refresh_job_lookup(out)
 
             elif action == "reschedule":
                 job_id = normalize_qa_job_id(step.get("job_id") or "")
@@ -195,6 +159,7 @@ async def execute_case(
                     )
                     plan = store.get_plan()
                     out.final_plan = plan
+                    _refresh_job_lookup(out)
                     evt["reschedule"] = {
                         "job_id": job_id,
                         "succeeded": res.succeeded,
@@ -215,6 +180,7 @@ async def execute_case(
                     plan = store.get_plan()
                     evt["reschedule"] = {"succeeded": res.succeeded}
                 out.final_plan = plan
+                _refresh_job_lookup(out)
 
             else:
                 evt["error"] = f"unknown_action:{action}"
@@ -226,9 +192,16 @@ async def execute_case(
 
     finally:
         _llm.chat = _original_chat
-        _geocoder.geocode = _original_geocode
 
     return out
+
+
+def _refresh_job_lookup(out: CaseExecutionResult) -> None:
+    """Sync job_lookup after GeoCluster may have refined coordinates."""
+    for jid in out.inserted_job_ids:
+        job = store.get_job(jid)
+        if job:
+            out.job_lookup[jid] = job
 
 
 async def apply_owner_retry(

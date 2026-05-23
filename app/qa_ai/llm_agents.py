@@ -32,7 +32,8 @@ TEST JOBS — define the jobs the scenario needs.
 
   "id"               — short slug like "job_001" (stored as qa_job_001 in Supabase)
   "service_type"     — window_cleaning | gutter_cleaning | pressure_washing | solar_panel_cleaning
-  "address"          — real West Island street address (geo agent will geocode lat/lng — do NOT include)
+  "address"          — real West Island street + city (e.g. "100 Lakeshore Rd, Pointe-Claire QC H9S 4A7")
+                       GeoCluster + Google Geocoding will verify lat/lng — NEVER include lat/lng in JSON
   "estimated_minutes"— window residential 60–180 min, gutter 90–240 min, pressure wash 90–180 min
   "difficulty"       — 1–5
   "required_skills"  — from: ladder_cert, lift_operator, pressure_wash, glass_restoration
