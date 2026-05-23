@@ -13,6 +13,7 @@ Agentic AI production manager for window cleaning companies: scheduling, crew as
 
 ```
 production-agent/
+├── frontend/                # Next.js dispatcher UI (Phase 9)
 ├── backend/                 # FastAPI application
 │   └── app/
 │       ├── main.py          # App entry
@@ -55,8 +56,8 @@ production-agent/
 | 5 — Critic agent | Done |
 | 6 — Orchestrator loop | Done |
 | 7 — Specialists | Done |
-| 8 — Chat API | **Current** |
-| 9 — Dispatcher UI | Pending |
+| 8 — Chat API | Done |
+| 9 — Dispatcher UI | **Current** |
 
 ## License
 
