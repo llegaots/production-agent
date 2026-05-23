@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     travel_cache_ttl_hours: int = Field(default=168, ge=1)
     weather_cache_ttl_hours: int = Field(default=6, ge=1)
 
+    anthropic_api_key: str | None = Field(default=None)
+    anthropic_model: str = Field(default="claude-sonnet-4-20250514")
+
 
 @lru_cache
 def get_settings() -> Settings:

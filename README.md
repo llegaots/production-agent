@@ -20,6 +20,7 @@ production-agent/
 │       ├── db/              # Postgres + supabase-py clients
 │       ├── optimizer/       # OR-Tools VRP (Phase 3, no DB)
 │       ├── tools/           # Orchestrator tool wrappers (Phase 4)
+│       ├── critic/          # Deterministic + LLM schedule critic (Phase 5)
 │       └── routers/         # HTTP routes
 ├── supabase/
 │   ├── config.toml          # Supabase CLI config
@@ -47,8 +48,9 @@ production-agent/
 | 1 — Scaffolding | Done |
 | 2 — Data models | Done |
 | 3 — OR-Tools optimizer | Done |
-| 4 — Tool wrappers | **Current** |
-| 5 — Orchestrator | Pending |
+| 4 — Tool wrappers | Done |
+| 5 — Critic agent | **Current** |
+| 6 — Orchestrator | Pending |
 | 6 — Specialists | Pending |
 | 7 — REST API | Pending |
 | 8 — Dispatcher UI | Pending |
