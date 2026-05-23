@@ -19,6 +19,7 @@ production-agent/
 │       ├── config.py        # Pydantic settings
 │       ├── db/              # Postgres + supabase-py clients
 │       ├── optimizer/       # OR-Tools VRP (Phase 3, no DB)
+│       ├── tools/           # Orchestrator tool wrappers (Phase 4)
 │       └── routers/         # HTTP routes
 ├── supabase/
 │   ├── config.toml          # Supabase CLI config
@@ -45,8 +46,8 @@ production-agent/
 |-------|--------|
 | 1 — Scaffolding | Done |
 | 2 — Data models | Done |
-| 3 — OR-Tools optimizer | Done (verify) |
-| 4 — Tool wrappers | Pending |
+| 3 — OR-Tools optimizer | Done |
+| 4 — Tool wrappers | **Current** |
 | 5 — Orchestrator | Pending |
 | 6 — Specialists | Pending |
 | 7 — REST API | Pending |

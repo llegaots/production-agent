@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     app_name: str = "Production Agent"
     debug: bool = False
 
+    google_maps_api_key: str | None = Field(
+        default=None,
+        description="Google Maps Distance Matrix API key",
+    )
+    tomorrow_io_api_key: str | None = Field(
+        default=None,
+        description="Tomorrow.io weather API key",
+    )
+    travel_cache_ttl_hours: int = Field(default=168, ge=1)
+    weather_cache_ttl_hours: int = Field(default=6, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:
