@@ -29,13 +29,16 @@ def main() -> int:
     settings = get_settings()
     exit_code = 0
 
-    print("Checking direct Postgres (SUPABASE_DB_URL)...")
-    try:
-        pg = check_postgres_connection(settings)
-        print(f"  OK — db={pg['database']}, postgis={pg['postgis_enabled']}")
-    except Exception as exc:
-        print(f"  FAIL — {exc}")
-        exit_code = 1
+    if not settings.supabase_db_url:
+        print("Skipping Postgres (SUPABASE_DB_URL not set).")
+    else:
+        print("Checking direct Postgres (SUPABASE_DB_URL)...")
+        try:
+            pg = check_postgres_connection(settings)
+            print(f"  OK — db={pg['database']}, postgis={pg['postgis_enabled']}")
+        except Exception as exc:
+            print(f"  FAIL — {exc}")
+            exit_code = 1
 
     print("Checking Supabase API (SUPABASE_URL + SUPABASE_SERVICE_KEY)...")
     try:

@@ -24,6 +24,8 @@ def check_postgres_connection(settings: Settings) -> dict[str, Any]:
     Verify direct Postgres connectivity and report server metadata.
     Used by health checks and the standalone verify script.
     """
+    if not settings.supabase_db_url:
+        raise ValueError("SUPABASE_DB_URL is not set")
     with postgres_connection(settings) as conn:
         with conn.cursor() as cur:
             cur.execute(

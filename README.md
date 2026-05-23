@@ -42,8 +42,8 @@ production-agent/
 
 | Phase | Status |
 |-------|--------|
-| 1 — Scaffolding | **Current** |
-| 2 — Data models | Pending |
+| 1 — Scaffolding | Done |
+| 2 — Data models | **Current** |
 | 3 — OR-Tools optimizer | Pending |
 | 4 — Tool wrappers | Pending |
 | 5 — Orchestrator | Pending |

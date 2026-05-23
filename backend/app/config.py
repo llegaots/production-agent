@@ -23,8 +23,8 @@ class Settings(BaseSettings):
         ...,
         description="Supabase service role key (server-side only)",
     )
-    supabase_db_url: PostgresDsn = Field(
-        ...,
+    supabase_db_url: PostgresDsn | None = Field(
+        default=None,
         description="Direct Postgres connection string (migrations, raw SQL)",
     )
 
