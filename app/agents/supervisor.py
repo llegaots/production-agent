@@ -167,6 +167,12 @@ class SupervisorAgent(Agent):
             for w in cd.warnings:
                 conflicts.append(f"{cd.crew_id} {cd.day.isoformat()}: {w}")
 
+        # Post-build validation: scan all crew_days for singleton equipment
+        # double-bookings that may have survived the earlier checks.
+        jobs_by_id = {j.id: j for j in ctx.jobs}
+        post_conflicts = self._detect_equipment_double_bookings(crew_days, jobs_by_id)
+        conflicts.extend(post_conflicts)
+
         summary = await self._summarize(ctx, crew_days, unscheduled, conflicts)
 
         plan = WeekPlan(
@@ -211,6 +217,45 @@ class SupervisorAgent(Agent):
         await ctx.emit(self.name, "done", summary)
 
         return result
+
+    def _detect_equipment_double_bookings(
+        self,
+        crew_days: list[CrewDay],
+        jobs_by_id: dict,
+    ) -> list[str]:
+        """Scan finalised crew_days for site-locked equipment double-bookings.
+
+        Site-locked equipment (e.g. scissor_lift) cannot be transported between
+        job sites within a single day, so at most one job per crew-day may use it.
+        Returns a list of human-readable conflict strings for every violation.
+        """
+        from ..models import EquipmentKind as _EK
+        SITE_LOCKED = {_EK.SCISSOR_LIFT}
+        violations: list[str] = []
+        for cd in crew_days:
+            eq_jobs: dict[str, list[str]] = {}
+            for stop in cd.stops:
+                job = jobs_by_id.get(stop.job_id)
+                if not job:
+                    continue
+                for ekind in job.required_equipment:
+                    if ekind not in SITE_LOCKED:
+                        continue
+                    eq_jobs.setdefault(ekind.value, []).append(stop.job_id)
+
+            for ekind_val, jids in eq_jobs.items():
+                total = sum(
+                    eq.quantity
+                    for eq in store.list_equipment()
+                    if eq.kind.value == ekind_val
+                )
+                if len(jids) > total:
+                    violations.append(
+                        f"Equipment conflict: {cd.crew_id}/{cd.day.isoformat()} "
+                        f"has {len(jids)} jobs requiring {ekind_val} "
+                        f"({', '.join(jids)}) but only {total} unit(s) available."
+                    )
+        return violations
 
     async def _evict_equipment_conflicts(self, ctx: AgentContext) -> None:
         """Remove jobs with unresolvable equipment conflicts from crew_days and

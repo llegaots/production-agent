@@ -115,6 +115,49 @@ class EquipmentAgent(Agent):
                                 if jid not in conflict_deferred
                             ]
 
+        # Intra-crew same-day site-locked equipment conflict: two jobs on the same
+        # crew-day both requiring a site-locked equipment kind (e.g. scissor_lift).
+        # Site-locked equipment cannot be transported between job sites in one day,
+        # so at most one job per crew-day may use it.
+        # CrewMatchAgent already tries to prevent this, but a validation pass
+        # here catches any cases that slipped through and defers excess jobs.
+        SITE_LOCKED = {EquipmentKind.SCISSOR_LIFT}
+        for entry in draft:
+            eq_job_map: dict[EquipmentKind, list[str]] = defaultdict(list)
+            for jid in entry["job_ids"]:
+                if jid in conflict_deferred:
+                    continue
+                job = jobs_by_id.get(jid)
+                if not job:
+                    continue
+                for ekind in job.required_equipment:
+                    if ekind in SITE_LOCKED:
+                        eq_job_map[ekind].append(jid)
+
+            for ekind, jids_needing in eq_job_map.items():
+                total = sum(eq.quantity for eq in store.list_equipment() if eq.kind == ekind)
+                if len(jids_needing) <= total:
+                    continue
+                # Sort by revenue desc; keep the highest-revenue jobs, defer the rest.
+                jids_needing.sort(
+                    key=lambda jid: -(jobs_by_id[jid].price if jobs_by_id.get(jid) else 0)
+                )
+                for excess_jid in jids_needing[total:]:
+                    if excess_jid in conflict_deferred:
+                        continue
+                    conflict_deferred.append(excess_jid)
+                    msg = (
+                        f"On {entry['day'].isoformat()}, crew {entry['crew_id']} "
+                        f"has {len(jids_needing)} jobs requiring {ekind.value} "
+                        f"but only {total} unit(s) available — deferring {excess_jid}."
+                    )
+                    conflicts.append(msg)
+                    await ctx.emit(self.name, "conflict", msg)
+                # Remove deferred jobs from the draft entry.
+                entry["job_ids"] = [
+                    jid for jid in entry["job_ids"] if jid not in conflict_deferred
+                ]
+
         # Add conflict-deferred jobs to the unscheduled list so they appear
         # in the plan's unscheduled_job_ids rather than as ghost assignments.
         existing_unscheduled: list[str] = ctx.blackboard.get("unscheduled", [])

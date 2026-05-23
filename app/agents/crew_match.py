@@ -99,6 +99,22 @@ class CrewMatchAgent(Agent):
         draft_plan: list[dict] = []
         unscheduled: list[str] = []
 
+        # Equipment kinds that are "site-locked": they cannot be transported between
+        # job sites within a single day, so at most one job per crew-day may use them.
+        # Portable equipment (ladders, WFPs, pressure washers) is excluded — crews
+        # carry it between stops without restriction.
+        SITE_LOCKED = {EquipmentKind.SCISSOR_LIFT}
+
+        # Pre-compute total quantity available per site-locked equipment kind.
+        eq_quantities: dict[EquipmentKind, int] = {}
+        for _eq in store.list_equipment():
+            if _eq.kind in SITE_LOCKED:
+                eq_quantities[_eq.kind] = eq_quantities.get(_eq.kind, 0) + _eq.quantity
+
+        # Track how many jobs needing each site-locked equipment kind are booked
+        # per (crew_id, day) to enforce the one-per-crew-day constraint.
+        equipment_slots: dict[tuple[str, date], dict[EquipmentKind, int]] = {}
+
         # Sort clusters: default heaviest-first; REVENUE_PRIORITY sorts by price.
         order = sorted(
             range(len(clusters)),
@@ -146,6 +162,21 @@ class CrewMatchAgent(Agent):
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue
+                    # Reject slot if it would double-book a site-locked equipment kind.
+                    # Count how many jobs in this batch need each site-locked kind,
+                    # and compare the combined total (existing + new) against quantity.
+                    slot_key = (crew.id, day)
+                    booked = equipment_slots.get(slot_key, {})
+                    eq_overload = False
+                    for ekind in SITE_LOCKED:
+                        batch_count = sum(1 for j in jobs if ekind in j.required_equipment)
+                        if batch_count == 0:
+                            continue
+                        if booked.get(ekind, 0) + batch_count > eq_quantities.get(ekind, 9999):
+                            eq_overload = True
+                            break
+                    if eq_overload:
+                        continue
                     remaining = crew.daily_minutes - used_min
                     score = fit + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
                     candidates.append((score, crew, day))
@@ -161,6 +192,14 @@ class CrewMatchAgent(Agent):
                 {"crew_id": crew.id, "day": day, "job_ids": [j.id for j in ordered_jobs]}
             )
             used[(crew.id, day)] = used.get((crew.id, day), 0) + total
+            # Record site-locked equipment usage for per-crew-day constraint tracking.
+            slot_key = (crew.id, day)
+            if slot_key not in equipment_slots:
+                equipment_slots[slot_key] = {}
+            for j in ordered_jobs:
+                for ekind in j.required_equipment:
+                    if ekind in SITE_LOCKED:
+                        equipment_slots[slot_key][ekind] = equipment_slots[slot_key].get(ekind, 0) + 1
             return True
 
         for idx in order:
