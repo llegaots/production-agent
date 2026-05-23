@@ -2,13 +2,17 @@
 
 Follow these steps once to create your cloud project and wire it to this repo.
 
-## 1. Create a Supabase project
+## 1. Supabase project
+
+**Your project:** `PRODUCTION AGENT` — ref `awwcdqwdwrtbmkplpkup` (us-west-2).
+
+If you are setting up from scratch:
 
 1. Go to [https://supabase.com/dashboard](https://supabase.com/dashboard) and sign in.
-2. **New project** → pick an organization, name (e.g. `production-agent`), database password, region.
-3. Wait until the project status is **Active**.
+2. **New project** → name (e.g. `production-agent`), database password, region.
+3. Wait until status is **Active**.
 
-Save the database password somewhere safe — you need it for `SUPABASE_DB_URL`.
+Save the database password — you need it for `SUPABASE_DB_URL`.
 
 ## 2. Collect credentials
 
@@ -102,3 +106,12 @@ Open [http://localhost:8000/docs](http://localhost:8000/docs) and try:
 | `postgis_enabled: false` | Run `supabase db push` or the SQL above |
 
 When both health checks pass, reply **go** to continue to **Phase 2 — Data models**.
+
+## Cloud Agent / remote VM note
+
+`.env` is gitignored and **does not sync** to the cloud VM automatically. If you created `.env` only on your laptop:
+
+1. Save the same file as `/workspace/.env` in the agent workspace (or paste keys into **Cloud Agent secrets** as `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_DB_URL`).
+2. Run `python scripts/check_env.py` then `python scripts/verify_connections.py`.
+
+**Already done on your `PRODUCTION AGENT` project (via dashboard MCP):** PostGIS extension enabled (`postgis` 3.3.7).
