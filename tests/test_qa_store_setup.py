@@ -9,6 +9,7 @@ from app.qa_ai.store_setup import (
     load_reference_data_only,
     normalize_case,
     validate_case,
+    validate_case_designer_output,
 )
 from app.storage import store
 
@@ -41,7 +42,8 @@ def test_validate_case_rejects_missing_test_jobs():
     assert "test_jobs" in err
 
 
-def test_validate_case_accepts_valid_case():
+def test_validate_case_accepts_valid_case(monkeypatch):
+    monkeypatch.setenv("QA_MIN_TEST_JOBS", "1")
     err = validate_case({
         "fingerprint": "geo_test",
         "test_jobs": [
@@ -49,6 +51,29 @@ def test_validate_case_accepts_valid_case():
         ],
     })
     assert err is None
+
+
+def test_validate_case_rejects_lat_lng():
+    err = validate_case_designer_output({
+        "test_jobs": [
+            {
+                "id": "job_001",
+                "address": "100 Main, Kirkland QC",
+                "lat": 45.45,
+                "lng": -73.87,
+            }
+        ],
+    })
+    assert err is not None
+    assert "lat/lng" in err
+
+
+def test_normalize_case_strips_lat_lng():
+    case = normalize_case({
+        "test_jobs": [{"id": "job_001", "address": "x", "lat": 1.0, "lng": 2.0}],
+    })
+    assert "lat" not in case["test_jobs"][0]
+    assert "lng" not in case["test_jobs"][0]
 
 
 def test_purge_supabase_seed_artifacts():

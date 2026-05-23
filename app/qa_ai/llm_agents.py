@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from ..llm import llm, safe_json
 from ..vision import PRODUCTION_MANAGER_VISION
+from .store_setup import qa_max_test_jobs, qa_min_test_jobs, qa_target_test_jobs
 
 CASE_DESIGNER_SYSTEM = """You are a veteran West Island (Montreal) window cleaning production manager.
 You design one REALISTIC test scenario at a time for ProductionAgent scheduling software.
@@ -32,10 +33,11 @@ TEST JOBS — define the jobs the scenario needs.
 
   "id"               — short slug like "job_001" (stored as qa_job_001 in Supabase)
   "service_type"     — window_cleaning | gutter_cleaning | pressure_washing | solar_panel_cleaning
-  "address"          — MUST include street number, city, QC, and postal code
-                       (e.g. "200 Saint-Louis Ave, Pointe-Claire QC H9R 2A1").
-                       GeoCluster + Google Geocoding verify lat/lng — NEVER include lat/lng in JSON.
-                       Use distinct cities: Pointe-Claire, Beaconsfield, Kirkland, Dorval, etc.
+  "address"          — MUST include street number + street name, city, QC, and postal code
+                       (e.g. "547 Saint-Jean Blvd, Pointe-Claire QC H9R 3J1").
+                       GeoClusterAgent + Google Geocoding resolve lat/lng at plan time.
+                       NEVER include lat/lng in test_jobs JSON — address only.
+                       Spread jobs across Pointe-Claire, Beaconsfield, Kirkland, Dorval, Dollard-des-Ormeaux, Baie-D'Urfé, etc.
   "estimated_minutes"— window residential 60–180 min, gutter 90–240 min, pressure wash 90–180 min
   "difficulty"       — 1–5
   "required_skills"  — from: ladder_cert, lift_operator, pressure_wash, glass_restoration
@@ -51,7 +53,8 @@ CREW CAPABILITIES:
   (crew_charlie does rope access — we don't use them)
 
 Only assign skills/equipment that at least one of alpha/bravo/delta can cover.
-Keep to 2–4 test jobs per scenario. test_jobs is REQUIRED — do not reference seed job IDs (job_W*, job_G*, etc.).
+Use 18–22 test jobs per scenario (realistic weekly workload). test_jobs is REQUIRED — do not reference seed job IDs (job_W*, job_G*, etc.).
+Assign each job a unique id (job_001 … job_022). Vary service types, neighbourhoods, date windows, and equipment needs.
 
 ══════════════════════════════════════════════════════════════════
 STEPS — the actions the executor will run in order:
@@ -194,6 +197,7 @@ async def design_test_case(
 
     user = (
         f"Case {case_index + 1}.\n\n"
+        f"Target {qa_target_test_jobs()} test jobs (minimum {qa_min_test_jobs()}, maximum {qa_max_test_jobs()}).\n"
         f"Themes already covered (DO NOT repeat): {json.dumps(covered)}\n"
         f"Themes not yet tested: {json.dumps(uncovered)}\n"
         f"Design a scenario for theme: \"{next_theme}\"\n\n"
@@ -201,7 +205,7 @@ async def design_test_case(
         f"Failed this run (avoid repeating): "
         f"{json.dumps([f.get('fingerprint') for f in failed_this_run])}\n"
     )
-    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1500)
+    data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=8000)
     if err:
         return {"_error": err}
     return data

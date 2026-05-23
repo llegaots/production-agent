@@ -73,14 +73,15 @@ async def execute_case(
             out.events.append({"step": -1, "action": "error", "error": "no_test_jobs"})
             return out
 
-        inserted_job_ids, geocode_log = await insert_test_jobs(test_job_defs, run_id, ws)
+        inserted_job_ids, _geocode_log = await insert_test_jobs(test_job_defs, run_id, ws)
         out.inserted_job_ids = inserted_job_ids
         out.events.append({
             "step": -1,
             "action": "test_jobs_inserted",
             "count": len(inserted_job_ids),
             "ids": inserted_job_ids,
-            "geocoded": geocode_log,
+            "geocode_deferred": True,
+            "note": "Jobs inserted address-only; GeoClusterAgent geocodes during plan",
         })
 
         for jid in inserted_job_ids:

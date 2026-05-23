@@ -20,7 +20,7 @@ from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
 from .schedule_snapshot import filter_qa_schedule_context, format_schedule_markdown
-from .store_setup import normalize_case, prepare_qa_run, validate_case
+from .store_setup import normalize_case, prepare_qa_run, validate_case, validate_case_designer_output
 from .test_job_manager import delete_test_jobs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -89,6 +89,12 @@ class AIQATeamRunner:
                 break
             if not case or not case.get("fingerprint"):
                 self.audit.log("CaseDesigner", "fail", "Could not design case; stopping loop.")
+                break
+
+            case_err = validate_case_designer_output(case)
+            if case_err:
+                self.audit.log("CaseDesigner", "invalid", case_err, detail=case, level="warning")
+                llm_errors.append(case_err)
                 break
 
             case = normalize_case(case)

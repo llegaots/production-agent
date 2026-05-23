@@ -109,30 +109,78 @@ def test_geocode_test_job_uses_distinct_coordinates():
     assert record["final_lng"] == -73.8620
 
 
-def test_insert_test_jobs_geocodes_before_persist():
+def test_insert_test_jobs_defers_geocode_to_plan():
     seed(reset=True)
 
     async def _run():
         mock_sb = AsyncMock()
         mock_sb.enabled = False
-        with patch("app.qa_ai.test_job_manager.geocoder.geocode", _mock_geocode_by_address()):
-            with patch("app.qa_ai.test_job_manager.supabase", mock_sb):
-                return await insert_test_jobs(
-                    [
-                        {"id": "job_001", "service_type": "window_cleaning", "address": "100 Lakeshore, Pointe-Claire QC"},
-                        {"id": "job_002", "service_type": "gutter_cleaning", "address": "50 Elm, Beaconsfield QC"},
-                    ],
-                    "run_geo",
-                    SEED_WEEK_START,
-                )
+        with patch("app.qa_ai.test_job_manager.supabase", mock_sb):
+            return await insert_test_jobs(
+                [
+                    {"id": "job_001", "service_type": "window_cleaning", "address": "100 Lakeshore, Pointe-Claire QC"},
+                    {"id": "job_002", "service_type": "gutter_cleaning", "address": "50 Elm, Beaconsfield QC"},
+                ],
+                "run_geo",
+                SEED_WEEK_START,
+            )
 
     ids, geo_log = asyncio.run(_run())
     assert len(ids) == 2
-    assert len(geo_log) == 2
+    assert geo_log == []
     j1 = store.get_job("qa_job_001")
     j2 = store.get_job("qa_job_002")
     assert j1 and j2
-    assert (j1.lat, j1.lng) != (j2.lat, j2.lng)
+    assert j1.lat == 0.0 and j1.lng == 0.0
+    assert j2.lat == 0.0 and j2.lng == 0.0
+    assert "pending geocode" in (j1.notes or "")
+
+
+def test_insert_test_jobs_supabase_upsert_has_zero_coords():
+    seed(reset=True)
+    upsert_rows: list[dict] = []
+
+    async def _fake_upsert(table, row):
+        upsert_rows.append({"table": table, **(row if isinstance(row, dict) else row[0])})
+        return [row]
+
+    mock_sb = AsyncMock()
+    mock_sb.enabled = True
+    mock_sb.upsert = AsyncMock(side_effect=_fake_upsert)
+
+    with patch("app.qa_ai.test_job_manager.supabase", mock_sb):
+        ids, _ = asyncio.run(
+            insert_test_jobs(
+                [{"id": "job_001", "service_type": "window_cleaning", "address": "547 Saint-Jean Blvd, Pointe-Claire QC"}],
+                "run_x",
+                SEED_WEEK_START,
+            )
+        )
+
+    assert ids == ["qa_job_001"]
+    job_rows = [r for r in upsert_rows if r["table"] == "jobs"]
+    assert len(job_rows) == 1
+    assert job_rows[0]["lat"] == 0.0
+    assert job_rows[0]["lng"] == 0.0
+    assert "547 Saint-Jean" in job_rows[0]["address"]
+
+
+def test_build_test_job_ignores_lat_lng_in_def():
+    seed(reset=True)
+    job = build_test_job(
+        {
+            "id": "job_001",
+            "service_type": "window_cleaning",
+            "address": "50 Elm, Beaconsfield QC",
+            "lat": 45.99,
+            "lng": -73.99,
+        },
+        "run1",
+        SEED_WEEK_START,
+    )
+    assert job is not None
+    assert job.lat == 0.0
+    assert job.lng == 0.0
 
 
 def test_execute_case_snapshot_shows_qa_jobs_not_unknown():

@@ -258,8 +258,8 @@ def build_test_job(job_def: dict, run_id: str, week_start: date) -> Optional[Job
             client_id=client_id,
             service_type=_parse_service(job_def.get("service_type", "window_cleaning")),
             address=str(job_def.get("address", "Test address, Montreal QC")),
-            lat=float(job_def.get("lat", 0.0)),
-            lng=float(job_def.get("lng", 0.0)),
+            lat=0.0,
+            lng=0.0,
             estimated_minutes=int(job_def.get("estimated_minutes", 90)),
             difficulty=min(5, max(1, int(job_def.get("difficulty", 2)))),
             required_skills=_parse_skills(job_def.get("required_skills") or []),
@@ -280,25 +280,24 @@ async def insert_test_jobs(
     run_id: str,
     week_start: date,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """Build jobs, geocode addresses, write to store + Supabase. Returns (ids, geocode_log)."""
+    """Build address-only jobs, write to store + Supabase (no coords).
+
+    Coordinates are resolved later by GeoClusterAgent during plan from the
+    street address — that path is what QA is meant to exercise.
+    Returns (ids, empty geocode_log placeholder for API compatibility).
+    """
     if supabase.enabled:
         await ensure_supabase_reference_data()
 
     inserted: list[str] = []
-    geocode_log: list[dict[str, Any]] = []
     for jd in job_defs:
         job = build_test_job(jd, run_id, week_start)
         if not job:
             continue
 
-        # Real geocoding before persist — each job gets distinct verified coordinates.
-        geo = await geocode_test_job(job)
-        geocode_log.append(geo)
-
-        # Write to in-memory store (geocode_test_job already updated coords).
+        job.notes = (job.notes or "").rstrip() + " [coords pending geocode]"
         store.jobs[job.id] = job
 
-        # Write to Supabase if configured.
         if supabase.enabled:
             try:
                 await supabase.upsert(
@@ -308,8 +307,8 @@ async def insert_test_jobs(
                         "client_id": job.client_id,
                         "service_type": job.service_type.value,
                         "address": job.address,
-                        "lat": job.lat,
-                        "lng": job.lng,
+                        "lat": 0.0,
+                        "lng": 0.0,
                         "estimated_minutes": job.estimated_minutes,
                         "difficulty": job.difficulty,
                         "required_skills":    [s.value for s in job.required_skills],
@@ -328,7 +327,7 @@ async def insert_test_jobs(
                 )
 
         inserted.append(job.id)
-    return inserted, geocode_log
+    return inserted, []
 
 
 async def delete_test_jobs(job_ids: list[str]) -> None:

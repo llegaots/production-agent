@@ -39,6 +39,7 @@ def test_format_schedule_markdown():
 
 
 def test_ai_qa_reflective_loop(monkeypatch):
+    monkeypatch.setenv("QA_MIN_TEST_JOBS", "1")
     seed(reset=True)
     uid = uuid.uuid4().hex[:8]
 

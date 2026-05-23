@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from ..seed import seed
@@ -13,6 +14,18 @@ log = logging.getLogger(__name__)
 
 # Seed dataset job ID prefixes — QA must NEVER schedule or reference these.
 SEED_JOB_PREFIXES = ("job_W", "job_G", "job_P", "job_H", "job_S", "job_0")
+
+
+def qa_target_test_jobs() -> int:
+    return max(1, int(os.getenv("QA_TARGET_TEST_JOBS", "20")))
+
+
+def qa_min_test_jobs() -> int:
+    return max(1, min(qa_target_test_jobs(), int(os.getenv("QA_MIN_TEST_JOBS", "15"))))
+
+
+def qa_max_test_jobs() -> int:
+    return max(qa_min_test_jobs(), int(os.getenv("QA_MAX_TEST_JOBS", "25")))
 
 
 def load_reference_data_only() -> None:
@@ -43,6 +56,8 @@ def normalize_case(case: dict) -> dict:
         raw = str(row.get("id") or row.get("job_id") or "")
         if raw:
             row["id"] = normalize_qa_job_id(raw)
+        row.pop("lat", None)
+        row.pop("lng", None)
         test_jobs.append(row)
     out["test_jobs"] = test_jobs
 
@@ -60,6 +75,15 @@ def normalize_case(case: dict) -> dict:
     return out
 
 
+def validate_case_designer_output(case: dict) -> Optional[str]:
+    """Validate raw LLM case output before normalize strips fields."""
+    for jd in case.get("test_jobs") or []:
+        if jd.get("lat") is not None or jd.get("lng") is not None:
+            jid = jd.get("id") or jd.get("job_id") or "?"
+            return f"test_job {jid} must not include lat/lng — geocoder resolves coords from address"
+    return None
+
+
 def validate_case(case: dict) -> Optional[str]:
     """Return error message if case is invalid for AI QA."""
     if not case.get("fingerprint"):
@@ -67,8 +91,12 @@ def validate_case(case: dict) -> Optional[str]:
     test_jobs = case.get("test_jobs") or []
     if not test_jobs:
         return "Case must define test_jobs — AI QA does not use seed jobs (job_W*, job_G*, etc.)"
-    if len(test_jobs) > 6:
-        return f"Too many test_jobs ({len(test_jobs)}); keep to 2–4"
+    min_jobs = qa_min_test_jobs()
+    max_jobs = qa_max_test_jobs()
+    if len(test_jobs) < min_jobs:
+        return f"Too few test_jobs ({len(test_jobs)}); need at least {min_jobs}"
+    if len(test_jobs) > max_jobs:
+        return f"Too many test_jobs ({len(test_jobs)}); keep to {max_jobs} or fewer"
     for jd in test_jobs:
         if not jd.get("id") and not jd.get("job_id"):
             return "Each test_job needs an id"
