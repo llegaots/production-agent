@@ -1,0 +1,70 @@
+name: simple_week
+description: 30 clustered jobs, 4 crews — should approve on first iteration.
+week_anchor: "2026-06-02"
+user_request: "Schedule the full simple week; cluster routes and assign all crews."
+expect:
+  status: approved
+  max_iterations: 1
+  max_high_severity_issues: 0
+  require_all_jobs_accounted: true
+use_llm_critic: false
+use_agent: false
+max_iterations: 4
+
+crews:
+  - id: crew-a
+    name: Alpha
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5017
+    base_lng: -73.5673
+  - id: crew-b
+    name: Bravo
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5020
+    base_lng: -73.5670
+  - id: crew-c
+    name: Charlie
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5014
+    base_lng: -73.5676
+  - id: crew-d
+    name: Delta
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5023
+    base_lng: -73.5667
+
+equipment:
+  - {id: eq-van-a, kind: van, label: Van A, quantity: 1}
+  - {id: eq-van-b, kind: van, label: Van B, quantity: 1}
+  - {id: eq-van-c, kind: van, label: Van C, quantity: 1}
+  - {id: eq-van-d, kind: van, label: Van D, quantity: 1}
+  - {id: eq-lad-1, kind: ladder_28, label: Ladder, quantity: 8}
+
+crew_equipment:
+  - {crew_id: crew-a, equipment_id: eq-van-a}
+  - {crew_id: crew-a, equipment_id: eq-lad-1}
+  - {crew_id: crew-b, equipment_id: eq-van-b}
+  - {crew_id: crew-b, equipment_id: eq-lad-1}
+  - {crew_id: crew-c, equipment_id: eq-van-c}
+  - {crew_id: crew-c, equipment_id: eq-lad-1}
+  - {crew_id: crew-d, equipment_id: eq-van-d}
+  - {crew_id: crew-d, equipment_id: eq-lad-1}
+
+clients:
+  - {id: client-01, name: Client 01, contact_email: c01@test.com, contact_phone: "514-555-0001"}
+  - {id: client-02, name: Client 02, contact_email: c02@test.com, contact_phone: "514-555-0002"}
+
+jobs:
+  - template: cluster_job
+    count: 30
+    service_type: window_cleaning
+    estimated_minutes: 35
+    required_skills: [residential]
+    required_equipment: [ladder_28]
+    cluster_lat: 45.505
+    cluster_lng: -73.565
+    spread: 0.008

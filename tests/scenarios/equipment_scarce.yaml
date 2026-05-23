@@ -1,0 +1,68 @@
+name: equipment_scarce
+description: Limited water-fed poles — only one crew carries WFP.
+week_anchor: "2026-06-02"
+user_request: "Schedule jobs respecting scarce water-fed pole inventory."
+expect:
+  status: approved
+  max_iterations: 3
+  max_high_severity_issues: 0
+  require_all_jobs_accounted: true
+use_llm_critic: false
+use_agent: false
+max_iterations: 4
+
+crews:
+  - id: crew-a
+    name: Alpha
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5017
+    base_lng: -73.5673
+  - id: crew-b
+    name: Bravo WFP
+    skills: [residential, commercial]
+    equipment_kinds: [water_fed_pole, van]
+    base_lat: 45.5020
+    base_lng: -73.5670
+  - id: crew-c
+    name: Charlie
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5014
+    base_lng: -73.5676
+
+equipment:
+  - {id: eq-van-a, kind: van, label: Van A, quantity: 1}
+  - {id: eq-van-b, kind: van, label: Van B, quantity: 1}
+  - {id: eq-van-c, kind: van, label: Van C, quantity: 1}
+  - {id: eq-wfp-1, kind: water_fed_pole, label: WFP kit, quantity: 1}
+  - {id: eq-lad-1, kind: ladder_28, label: Ladder, quantity: 6}
+
+crew_equipment:
+  - {crew_id: crew-a, equipment_id: eq-van-a}
+  - {crew_id: crew-a, equipment_id: eq-lad-1}
+  - {crew_id: crew-b, equipment_id: eq-van-b}
+  - {crew_id: crew-b, equipment_id: eq-wfp-1}
+  - {crew_id: crew-c, equipment_id: eq-van-c}
+  - {crew_id: crew-c, equipment_id: eq-lad-1}
+
+clients:
+  - {id: client-e1, name: Equip Client, contact_email: e1@test.com, contact_phone: "514-555-0300"}
+
+jobs:
+  - template: wfp_job
+    count: 4
+    service_type: window_cleaning
+    estimated_minutes: 50
+    required_equipment: [water_fed_pole]
+    cluster_lat: 45.504
+    cluster_lng: -73.566
+    spread: 0.01
+  - template: ladder_job
+    count: 6
+    service_type: window_cleaning
+    estimated_minutes: 40
+    required_equipment: [ladder_28]
+    cluster_lat: 45.5045
+    cluster_lng: -73.5655
+    spread: 0.01

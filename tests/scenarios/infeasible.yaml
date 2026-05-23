@@ -1,0 +1,44 @@
+name: infeasible
+description: Far more work than crew capacity — best-effort + human review.
+week_anchor: "2026-06-02"
+user_request: "Schedule all pending jobs for the week."
+expect:
+  status: needs_human_review
+  max_iterations: 4
+  max_high_severity_issues: 999
+  require_all_jobs_accounted: true
+  allow_unassigned: true
+use_llm_critic: false
+use_agent: false
+max_iterations: 4
+
+crews:
+  - id: crew-a
+    name: Solo A
+    skills: [residential]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5017
+    base_lng: -73.5673
+    daily_minutes: 480
+
+equipment:
+  - {id: eq-van-a, kind: van, label: Van, quantity: 1}
+  - {id: eq-lad-1, kind: ladder_28, label: Ladder, quantity: 2}
+
+crew_equipment:
+  - {crew_id: crew-a, equipment_id: eq-van-a}
+  - {crew_id: crew-a, equipment_id: eq-lad-1}
+
+clients:
+  - {id: client-x, name: Bulk Client, contact_email: x@test.com, contact_phone: "514-555-0400"}
+
+jobs:
+  - template: cluster_job
+    count: 30
+    service_type: window_cleaning
+    estimated_minutes: 90
+    required_skills: [residential]
+    required_equipment: [ladder_28]
+    cluster_lat: 45.506
+    cluster_lng: -73.564
+    spread: 0.015
