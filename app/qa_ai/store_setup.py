@@ -8,7 +8,12 @@ from typing import Any, Optional
 from ..seed import seed
 from ..storage import store
 from ..supabase_client import supabase
-from .test_job_manager import ensure_supabase_reference_data
+from .test_job_manager import (
+    ensure_supabase_reference_data,
+    existing_qa_addresses,
+    existing_qa_job_ids,
+    hydrate_qa_jobs_from_supabase,
+)
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +89,25 @@ def validate_case_designer_output(case: dict) -> Optional[str]:
     return None
 
 
+def _normalize_address(addr: str) -> str:
+    return " ".join(str(addr or "").lower().split())
+
+
+def validate_case_no_duplicate_jobs(case: dict) -> Optional[str]:
+    """Ensure new test jobs do not collide with QA jobs already in store/Supabase."""
+    existing_ids = existing_qa_job_ids()
+    existing_addrs = existing_qa_addresses()
+    for jd in case.get("test_jobs") or []:
+        raw = str(jd.get("id") or jd.get("job_id") or "")
+        jid = normalize_qa_job_id(raw) if raw else ""
+        if jid and jid in existing_ids:
+            return f"test_job id {jid} already exists — pick a new id not in the QA pool"
+        addr = _normalize_address(jd.get("address") or "")
+        if addr and addr in existing_addrs:
+            return f"test_job {jid or raw} reuses address already in QA pool: {jd.get('address')}"
+    return None
+
+
 def validate_case(case: dict) -> Optional[str]:
     """Return error message if case is invalid for AI QA."""
     if not case.get("fingerprint"):
@@ -106,7 +130,7 @@ def validate_case(case: dict) -> Optional[str]:
 
 
 async def purge_supabase_seed_artifacts() -> dict[str, Any]:
-    """Remove seed-job plans and job_* / qa_* rows from Supabase."""
+    """Remove seed-job plans and job_W*/job_G* rows from Supabase (keeps qa_* jobs)."""
     if not supabase.enabled:
         return {"purged": False, "reason": "supabase_disabled"}
 
@@ -127,12 +151,12 @@ async def purge_supabase_seed_artifacts() -> dict[str, Any]:
                 counts[table] = f"error:{exc}"
                 log.warning("purge %s failed: %s", table, exc)
 
-        for prefix in ("job_W%", "job_G%", "job_P%", "job_H%", "job_S%", "qa_%"):
+        for prefix in ("job_W%", "job_G%", "job_P%", "job_H%", "job_S%"):
             try:
                 await supabase.delete_like("jobs", "id", prefix)
             except Exception as exc:
                 log.warning("purge jobs like %s failed: %s", prefix, exc)
-        counts["jobs"] = "seed_and_qa_cleared"
+        counts["jobs"] = "seed_cleared_qa_retained"
     except Exception as exc:
         return {"purged": False, "error": str(exc), "partial": counts}
 
@@ -143,5 +167,17 @@ async def prepare_qa_run() -> dict[str, Any]:
     """One-shot prep at the start of an AI QA run."""
     load_reference_data_only()
     purge_result = await purge_supabase_seed_artifacts()
+    qa_loaded = await hydrate_qa_jobs_from_supabase()
     ref = await ensure_supabase_reference_data()
-    return {"reference_sync": ref, "purge": purge_result, "jobs_in_store": len(store.list_jobs())}
+    return {
+        "reference_sync": ref,
+        "purge": purge_result,
+        "qa_jobs_loaded": qa_loaded,
+        "jobs_in_store": len(store.list_jobs()),
+    }
+
+
+async def prepare_qa_execution_store() -> int:
+    """Reference data + persisted qa_* jobs for a single case execution."""
+    load_reference_data_only()
+    return await hydrate_qa_jobs_from_supabase()

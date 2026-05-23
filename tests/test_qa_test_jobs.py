@@ -109,6 +109,34 @@ def test_geocode_test_job_uses_distinct_coordinates():
     assert record["final_lng"] == -73.8620
 
 
+def test_insert_test_jobs_skips_existing_id():
+    seed(reset=True)
+    store.jobs["qa_job_001"] = build_test_job(
+        {"id": "job_001", "service_type": "window_cleaning", "address": "100 Lakeshore, Pointe-Claire QC"},
+        "prior",
+        SEED_WEEK_START,
+    )
+
+    async def _run():
+        mock_sb = AsyncMock()
+        mock_sb.enabled = False
+        with patch("app.qa_ai.test_job_manager.supabase", mock_sb):
+            return await insert_test_jobs(
+                [
+                    {"id": "job_001", "service_type": "window_cleaning", "address": "100 Lakeshore, Pointe-Claire QC"},
+                    {"id": "job_002", "service_type": "gutter_cleaning", "address": "50 Elm, Beaconsfield QC"},
+                ],
+                "run_geo",
+                SEED_WEEK_START,
+            )
+
+    ids, geo_log = asyncio.run(_run())
+    assert ids == ["qa_job_001", "qa_job_002"]
+    assert geo_log == []
+    assert store.get_job("qa_job_002") is not None
+    assert "[QA test job / run prior]" in (store.get_job("qa_job_001").notes or "")
+
+
 def test_insert_test_jobs_defers_geocode_to_plan():
     seed(reset=True)
 

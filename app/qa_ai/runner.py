@@ -20,8 +20,14 @@ from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
 from .schedule_snapshot import filter_qa_schedule_context, format_schedule_markdown
-from .store_setup import normalize_case, prepare_qa_run, validate_case, validate_case_designer_output
-from .test_job_manager import delete_test_jobs
+from .store_setup import (
+    normalize_case,
+    prepare_qa_run,
+    validate_case,
+    validate_case_designer_output,
+    validate_case_no_duplicate_jobs,
+)
+from .test_job_manager import existing_qa_job_catalog
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -82,6 +88,7 @@ class AIQATeamRunner:
                 failed_this_run=failed_fingerprints,
                 case_index=case_idx,
                 covered_themes=themes_covered(),
+                existing_qa_jobs=existing_qa_job_catalog(),
             )
             if case and case.get("_error"):
                 llm_errors.append(str(case["_error"]))
@@ -99,6 +106,8 @@ class AIQATeamRunner:
 
             case = normalize_case(case)
             case_err = validate_case(case)
+            if not case_err:
+                case_err = validate_case_no_duplicate_jobs(case)
             if case_err:
                 self.audit.log("CaseDesigner", "invalid", case_err, detail=case, level="warning")
                 llm_errors.append(case_err)
@@ -126,7 +135,6 @@ class AIQATeamRunner:
             }
 
             prior_critique: Optional[dict] = None
-            pending_cleanup: list[str] = []
             for iteration in range(1, _max_iterations() + 1):
                 self.audit.log(
                     "Executor",
@@ -157,8 +165,6 @@ class AIQATeamRunner:
                     iteration=iteration,
                     prior_critique=prior_critique,
                 )
-                if exec_result.inserted_job_ids:
-                    pending_cleanup = exec_result.inserted_job_ids
                 if not critique:
                     critique = {
                         "verdict": "fail",
@@ -206,15 +212,6 @@ class AIQATeamRunner:
                     break
                 if iteration >= _max_iterations():
                     case_record["final_critique"] = critique
-
-            if pending_cleanup:
-                await delete_test_jobs(pending_cleanup)
-                self.audit.log(
-                    "Executor",
-                    "cleanup",
-                    f"Removed {len(pending_cleanup)} QA test jobs from store + Supabase",
-                    detail={"ids": pending_cleanup},
-                )
 
             if not case_record["passed"]:
                 failed_fingerprints.append({"fingerprint": fp, "title": case.get("title")})

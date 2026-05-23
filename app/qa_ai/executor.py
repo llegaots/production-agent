@@ -1,8 +1,8 @@
 """Execute AI-designed QA scenarios against the real agent stack.
 
 AI QA is Supabase-only for jobs: no seed dataset (job_W*, job_G*, etc.).
-Each case defines test_jobs that are inserted as qa_* rows, executed, critiqued,
-then deleted.
+Each case defines test_jobs that are inserted as qa_* rows (and kept for
+future runs), executed, and critiqued.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from ..scheduling_prefs import SchedulingMode, parse_mode
 from ..seed import SEED_WEEK_START
 from ..storage import store
 from .schedule_snapshot import plan_result_context
-from .store_setup import load_reference_data_only, normalize_case, normalize_qa_job_id
+from .store_setup import normalize_case, normalize_qa_job_id, prepare_qa_execution_store
 from .test_job_manager import insert_test_jobs
 
 
@@ -54,8 +54,8 @@ async def execute_case(
     case = normalize_case(case)
     out = CaseExecutionResult()
 
-    # Reference data only — crews/clients/equipment, zero seed jobs.
-    load_reference_data_only()
+    # Reference data + any persisted qa_* jobs; case planning scopes to this case only.
+    await prepare_qa_execution_store()
 
     from ..llm import llm as _llm
     _original_chat = _llm.chat
@@ -73,18 +73,18 @@ async def execute_case(
             out.events.append({"step": -1, "action": "error", "error": "no_test_jobs"})
             return out
 
-        inserted_job_ids, _geocode_log = await insert_test_jobs(test_job_defs, run_id, ws)
-        out.inserted_job_ids = inserted_job_ids
+        case_job_ids, _geocode_log = await insert_test_jobs(test_job_defs, run_id, ws)
+        out.inserted_job_ids = case_job_ids
         out.events.append({
             "step": -1,
             "action": "test_jobs_inserted",
-            "count": len(inserted_job_ids),
-            "ids": inserted_job_ids,
+            "count": len(case_job_ids),
+            "ids": case_job_ids,
             "geocode_deferred": True,
-            "note": "Jobs inserted address-only; GeoClusterAgent geocodes during plan",
+            "note": "New jobs inserted address-only; existing qa_* jobs reused; GeoCluster geocodes at plan",
         })
 
-        for jid in inserted_job_ids:
+        for jid in case_job_ids:
             job = store.get_job(jid)
             if job:
                 out.job_lookup[jid] = job
@@ -101,7 +101,7 @@ async def execute_case(
                 out.scheduling_mode = mode.value
                 store.scheduling_mode = mode
                 sup = SupervisorAgent()
-                plan = await sup.plan_week(ws, scheduling_mode=mode)
+                plan = await sup.plan_week(ws, scheduling_mode=mode, job_ids=case_job_ids)
                 out.plan_results.append(plan)
                 out.final_plan = plan
                 store.set_plan(plan)
@@ -138,7 +138,7 @@ async def execute_case(
                     }
                 else:
                     sup = SupervisorAgent()
-                    plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                    plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode, job_ids=case_job_ids)
                     out.plan_results.append(plan)
                     out.final_plan = plan
                     _refresh_job_lookup(out)
@@ -172,7 +172,7 @@ async def execute_case(
                 job_id = normalize_qa_job_id(step.get("job_id") or "")
                 reason = step.get("reason") or "QA scenario disruption"
                 sup = SupervisorAgent()
-                plan = await sup.plan_week(ws, scheduling_mode=mode)
+                plan = await sup.plan_week(ws, scheduling_mode=mode, job_ids=case_job_ids)
                 out.plan_results.append(plan)
                 out.scheduling_mode = mode.value
                 if job_id:

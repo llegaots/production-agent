@@ -54,7 +54,7 @@ CREW CAPABILITIES:
 
 Only assign skills/equipment that at least one of alpha/bravo/delta can cover.
 Use 18–22 test jobs per scenario (realistic weekly workload). test_jobs is REQUIRED — do not reference seed job IDs (job_W*, job_G*, etc.).
-Assign each job a unique id (job_001 … job_022). Vary service types, neighbourhoods, date windows, and equipment needs.
+Assign each job a unique id (job_001 … job_999). Every id and address must be NEW — never reuse ids or street addresses already in the QA job pool (you will be given the existing list).
 
 ══════════════════════════════════════════════════════════════════
 STEPS — the actions the executor will run in order:
@@ -184,6 +184,7 @@ async def design_test_case(
     failed_this_run: list[dict],
     case_index: int,
     covered_themes: list[str] | None = None,
+    existing_qa_jobs: list[dict] | None = None,
 ) -> Optional[dict]:
     covered = covered_themes or []
 
@@ -195,9 +196,14 @@ async def design_test_case(
     uncovered = [t for t in all_themes if t not in covered]
     next_theme = uncovered[0] if uncovered else "geo_routing"
 
+    existing = existing_qa_jobs or []
+    next_job_num = len(existing) + 1
     user = (
         f"Case {case_index + 1}.\n\n"
         f"Target {qa_target_test_jobs()} test jobs (minimum {qa_min_test_jobs()}, maximum {qa_max_test_jobs()}).\n"
+        f"Existing QA jobs in database ({len(existing)} total) — DO NOT reuse these ids or addresses:\n"
+        f"{json.dumps(existing[:80], default=str)}\n"
+        f"Start new job ids at job_{next_job_num:03d} or higher.\n\n"
         f"Themes already covered (DO NOT repeat): {json.dumps(covered)}\n"
         f"Themes not yet tested: {json.dumps(uncovered)}\n"
         f"Design a scenario for theme: \"{next_theme}\"\n\n"

@@ -72,9 +72,11 @@ class SupervisorAgent(Agent):
         week_start: Optional[date] = None,
         emitter: Optional[EventEmitter] = None,
         scheduling_mode: Optional[SchedulingMode | str] = None,
+        job_ids: Optional[list[str]] = None,
     ) -> PlanResult:
         ws = week_start or _next_monday()
         week_end = week_days(ws)[-1]   # last working day of the 5-day window
+        allowed = set(job_ids) if job_ids else None
         jobs = [
             j for j in store.list_jobs()
             if j.status.value in ("pending", "scheduled", "rescheduled")
@@ -87,6 +89,7 @@ class SupervisorAgent(Agent):
             and j.latest_date is not None
             and j.earliest_date <= week_end
             and j.latest_date >= ws
+            and (allowed is None or j.id in allowed)
         ]
         crews = store.list_crews()
         mode = (

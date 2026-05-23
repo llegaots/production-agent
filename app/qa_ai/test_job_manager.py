@@ -1,8 +1,8 @@
-"""Create and destroy QA test jobs in Supabase and the in-memory store.
+"""Create and persist QA test jobs in Supabase and the in-memory store.
 
-The QA agent designs custom jobs that match each test scenario. This module
-inserts them into Supabase (so the scheduler sees them as real persisted
-jobs) and cleans them up afterward.
+The QA agent designs custom jobs that match each test scenario. New jobs are
+inserted into Supabase (address-only; geocoded at plan time) and kept across
+runs so the pool grows for future scenarios.
 
 Job IDs are prefixed ``qa_`` so they are easy to filter out of production
 reporting and won't collide with real job IDs.
@@ -93,6 +93,68 @@ def _parse_date(raw: Any, fallback: date) -> date:
         return date.fromisoformat(str(raw))
     except Exception:
         return fallback
+
+
+def _normalize_address(addr: str) -> str:
+    return " ".join(str(addr or "").lower().split())
+
+
+def _job_from_supabase_row(row: dict) -> Job:
+    earliest = _parse_date(row.get("earliest_date"), date.today())
+    latest = _parse_date(row.get("latest_date"), date.today())
+    return Job(
+        id=row["id"],
+        client_id=row["client_id"],
+        service_type=_parse_service(row.get("service_type", "window_cleaning")),
+        address=row["address"],
+        lat=float(row.get("lat") or 0.0),
+        lng=float(row.get("lng") or 0.0),
+        estimated_minutes=int(row.get("estimated_minutes") or 90),
+        difficulty=int(row.get("difficulty") or 2),
+        required_skills=_parse_skills(row.get("required_skills") or []),
+        required_equipment=_parse_equip(row.get("required_equipment") or []),
+        earliest_date=earliest,
+        latest_date=latest,
+        price=float(row.get("price") or 0),
+        status=JobStatus(row.get("status") or "pending"),
+        notes=row.get("notes") or "",
+    )
+
+
+def list_qa_jobs_in_store() -> list[Job]:
+    return [j for j in store.list_jobs() if j.id.startswith("qa_")]
+
+
+def existing_qa_job_catalog() -> list[dict[str, str]]:
+    """Summary of persisted QA jobs — passed to the case designer to avoid duplicates."""
+    return [{"id": j.id, "address": j.address} for j in list_qa_jobs_in_store()]
+
+
+def existing_qa_job_ids() -> set[str]:
+    return {j.id for j in list_qa_jobs_in_store()}
+
+
+def existing_qa_addresses() -> set[str]:
+    return {_normalize_address(j.address) for j in list_qa_jobs_in_store()}
+
+
+async def hydrate_qa_jobs_from_supabase() -> int:
+    """Load qa_* jobs from Supabase into the in-memory store (keeps other store data)."""
+    if not supabase.enabled:
+        return 0
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        rows = await supabase.select("jobs", filters={"id": "like.qa_%"})
+    except Exception as exc:
+        log.warning("qa hydrate jobs failed: %s", exc)
+        return 0
+    for row in rows:
+        try:
+            store.jobs[row["id"]] = _job_from_supabase_row(row)
+        except Exception as exc:
+            log.warning("qa hydrate skip %s: %s", row.get("id"), exc)
+    return len(rows)
 
 
 # West Island neighbourhood centroids — delegate to geocode module.
@@ -280,23 +342,39 @@ async def insert_test_jobs(
     run_id: str,
     week_start: date,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """Build address-only jobs, write to store + Supabase (no coords).
+    """Insert new address-only QA jobs; skip ids already in store/Supabase.
 
     Coordinates are resolved later by GeoClusterAgent during plan from the
-    street address — that path is what QA is meant to exercise.
-    Returns (ids, empty geocode_log placeholder for API compatibility).
+    street address. Returns (case_job_ids, empty geocode_log placeholder).
     """
     if supabase.enabled:
         await ensure_supabase_reference_data()
 
-    inserted: list[str] = []
+    case_job_ids: list[str] = []
+    skipped_existing: list[str] = []
+    known_addrs = existing_qa_addresses()
+
     for jd in job_defs:
         job = build_test_job(jd, run_id, week_start)
         if not job:
             continue
 
+        if job.id in store.jobs:
+            case_job_ids.append(job.id)
+            skipped_existing.append(job.id)
+            continue
+
+        addr_key = _normalize_address(job.address)
+        if addr_key in known_addrs:
+            import logging
+            logging.getLogger(__name__).warning(
+                "qa skip duplicate address for new job %s: %s", job.id, job.address
+            )
+            continue
+
         job.notes = (job.notes or "").rstrip() + " [coords pending geocode]"
         store.jobs[job.id] = job
+        known_addrs.add(addr_key)
 
         if supabase.enabled:
             try:
@@ -326,8 +404,14 @@ async def insert_test_jobs(
                     "qa test_job supabase upsert failed for %s: %s", job.id, exc
                 )
 
-        inserted.append(job.id)
-    return inserted, []
+        case_job_ids.append(job.id)
+
+    if skipped_existing:
+        import logging
+        logging.getLogger(__name__).info(
+            "qa reused %d existing test jobs: %s", len(skipped_existing), skipped_existing[:5]
+        )
+    return case_job_ids, []
 
 
 async def delete_test_jobs(job_ids: list[str]) -> None:
