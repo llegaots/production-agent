@@ -280,7 +280,7 @@ def _run_week_programmatic(ctx: OrchestratorContext) -> None:
                 "target_date": day.isoformat(),
                 "job_ids": batch,
                 "crew_ids": ctx.crew_ids,
-                "time_limit_seconds": 15,
+                "time_limit_seconds": get_settings().optimizer_time_limit_seconds,
             },
             ctx,
         )
@@ -340,7 +340,7 @@ def _run_iteration_programmatic(
             "target_date": primary,
             "job_ids": ctx.job_ids,
             "crew_ids": ctx.crew_ids,
-            "time_limit_seconds": 10,
+            "time_limit_seconds": get_settings().optimizer_time_limit_seconds,
         },
         ctx,
     )

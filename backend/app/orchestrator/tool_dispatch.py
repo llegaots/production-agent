@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
+from app.config import get_settings
 from app.critic.review import review_schedule
 from app.critic.schemas import ReviewScheduleInput
 from app.orchestrator.context import OrchestratorContext
@@ -202,16 +203,18 @@ def execute_tool(name: str, tool_input: dict[str, Any], ctx: OrchestratorContext
         ).model_dump(mode="json")
 
     if name == "run_optimizer":
-        job_ids = tool_input["job_ids"]
-        crew_ids = tool_input.get("crew_ids") or ctx.crew_ids
-        ctx.job_ids = job_ids
-        ctx.crew_ids = crew_ids
+        batch_job_ids = tool_input["job_ids"]
+        batch_crew_ids = tool_input.get("crew_ids") or ctx.crew_ids
+        if batch_crew_ids:
+            ctx.crew_ids = list(batch_crew_ids)
         out = run_optimizer(
             RunOptimizerInput(
                 target_date=_parse_date(tool_input["target_date"]),
-                job_ids=job_ids,
-                crew_ids=crew_ids,
-                time_limit_seconds=int(tool_input.get("time_limit_seconds", 15)),
+                job_ids=batch_job_ids,
+                crew_ids=batch_crew_ids,
+                time_limit_seconds=int(
+                    tool_input.get("time_limit_seconds", get_settings().optimizer_time_limit_seconds)
+                ),
             )
         )
         ctx.last_optimizer_output = out

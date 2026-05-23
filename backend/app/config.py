@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     app_name: str = "Production Agent"
     debug: bool = False
 
+    llm_provider: str = Field(default="anthropic")
+
     google_maps_api_key: str | None = Field(
         default=None,
         description="Google Maps Distance Matrix API key",
@@ -49,6 +51,18 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = Field(default=None)
     anthropic_model: str = Field(default="claude-sonnet-4-20250514")
+    anthropic_qa_model: str | None = Field(default=None)
+
+    qa_max_cases: int = Field(default=1, ge=1)
+    qa_max_iterations: int = Field(default=2, ge=1)
+    qa_target_test_jobs: int = Field(default=20, ge=1)
+    qa_min_test_jobs: int = Field(default=15, ge=1)
+    qa_max_test_jobs: int = Field(default=25, ge=1)
+
+    cursor_api_key: str | None = Field(default=None)
+    cursor_auto_handoff: bool = Field(default=False)
+    cursor_handoff_model: str | None = Field(default=None)
+
     orchestrator_max_iterations: int = Field(
         default=4,
         ge=1,
@@ -58,6 +72,8 @@ class Settings(BaseSettings):
             "MAX_CRITIC_ITERATIONS",
         ),
     )
+    optimizer_time_limit_seconds: int = Field(default=30, ge=1, le=300)
+    default_timezone: str = Field(default="America/Toronto")
 
     langfuse_public_key: str | None = Field(default=None)
     langfuse_secret_key: str | None = Field(default=None)
@@ -65,6 +81,20 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
     )
+
+
+def known_env_var_names() -> frozenset[str]:
+    """Every environment variable name accepted by Settings."""
+    names: set[str] = set()
+    for field_name, field in Settings.model_fields.items():
+        alias = field.validation_alias
+        if isinstance(alias, AliasChoices):
+            names.update(str(choice) for choice in alias.choices)
+        elif isinstance(alias, str):
+            names.add(alias)
+        else:
+            names.add(field_name.upper())
+    return frozenset(names)
 
 
 @lru_cache
