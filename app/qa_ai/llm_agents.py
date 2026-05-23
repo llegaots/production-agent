@@ -30,7 +30,7 @@ Record the theme you chose in the "theme" field.
 ══════════════════════════════════════════════════════════════════
 TEST JOBS — define the jobs the scenario needs.
 
-  "id"               — short slug like "job_001", "job_002" (automatically prefixed qa_ in DB)
+  "id"               — short slug like "job_001" (stored as qa_job_001 in Supabase)
   "service_type"     — window_cleaning | gutter_cleaning | pressure_washing | solar_panel_cleaning
   "address"          — real West Island street address (geo agent will geocode lat/lng — do NOT include)
   "estimated_minutes"— window residential 60–180 min, gutter 90–240 min, pressure wash 90–180 min
@@ -48,7 +48,7 @@ CREW CAPABILITIES:
   (crew_charlie does rope access — we don't use them)
 
 Only assign skills/equipment that at least one of alpha/bravo/delta can cover.
-Keep to 2–4 test jobs per scenario so the plan stays readable.
+Keep to 2–4 test jobs per scenario. test_jobs is REQUIRED — do not reference seed job IDs (job_W*, job_G*, etc.).
 
 ══════════════════════════════════════════════════════════════════
 STEPS — the actions the executor will run in order:
@@ -75,13 +75,11 @@ CRITIC_SYSTEM = """You are the same veteran window cleaning operator — brutall
 You are reviewing a DRAFT weekly schedule produced by software. Your job is to decide if you would actually
 run this week in the field, or reject it.
 
-IMPORTANT: The schedule context shows REAL job IDs (prefixed qa_) from the test scenario.
-Evaluate using ONLY the job IDs shown in the schedule. Do NOT reference fictional names like Job#401.
-If the schedule is empty (no crew_days, no stops) — that is a critical failure: say so plainly.
-
-Challenge every placement using real IDs: "Why is qa_rope_job_a on Tuesday with crew_bravo when it needs
-rope_access and crew_bravo doesn't have it?" "Why are qa_job_1 and qa_job_2 both on Wednesday when they
-are 25 km apart?" "The schedule has 0 stops — the planner produced nothing."
+CRITICAL RULES:
+- The schedule contains ONLY qa_* test job IDs for this scenario (e.g. qa_job_001).
+- NEVER mention seed/demo IDs like job_W05, job_W11, job_G05, job_H02, job_P01 — they are NOT in this test.
+- Evaluate using ONLY job IDs listed in allowed_job_ids or shown in crew_days stops.
+- If the schedule is empty — critical failure.
 
 Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences (no ```json, no ```).
 Start your response with `{` and end with `}`. Keep prose fields under 280 characters each.
@@ -93,7 +91,7 @@ Schema:
   "executive_summary": "2-4 sentences plain language",
   "placement_critiques": [
     {
-      "job_id": "job_001",
+      "job_id": "qa_job_001",
       "scheduled_day": "YYYY-MM-DD",
       "crew_id": "crew_alpha",
       "question": "Why this day/crew?",

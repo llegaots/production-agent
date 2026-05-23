@@ -111,3 +111,37 @@ def _minute_label(mins: int, shift_start: int = 8 * 60) -> str:
     total = shift_start + mins
     h, m = divmod(total, 60)
     return f"{h:02d}:{m:02d}"
+
+
+def filter_qa_schedule_context(
+    ctx: dict[str, Any],
+    *,
+    allowed_job_ids: set[str],
+) -> dict[str, Any]:
+    """Strip any non-qa test job IDs from schedule context sent to the critic."""
+    if not allowed_job_ids:
+        return ctx
+
+    out = dict(ctx)
+    crew_days = []
+    for cd in ctx.get("crew_days") or []:
+        stops = [s for s in cd.get("stops") or [] if s.get("job_id") in allowed_job_ids]
+        if not stops:
+            continue
+        row = dict(cd)
+        row["stops"] = stops
+        crew_days.append(row)
+    out["crew_days"] = crew_days
+
+    out["unscheduled_jobs"] = [
+        j for j in ctx.get("unscheduled_jobs") or [] if j.get("job_id") in allowed_job_ids
+    ]
+    if "metrics" in out and isinstance(out["metrics"], dict):
+        m = dict(out["metrics"])
+        m["scheduled_stops"] = sum(len(cd.get("stops") or []) for cd in crew_days)
+        m["unscheduled_count"] = len(out["unscheduled_jobs"])
+        m["crew_day_count"] = len(crew_days)
+        m["overbooked_days"] = sum(1 for cd in crew_days if cd.get("overbooked"))
+        out["metrics"] = m
+    out["allowed_job_ids"] = sorted(allowed_job_ids)
+    return out

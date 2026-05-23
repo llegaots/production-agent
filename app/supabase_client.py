@@ -126,5 +126,25 @@ class SupabaseClient:
             )
             r.raise_for_status()
 
+    async def delete_all(self, table: str, *, not_null_column: str = "id") -> None:
+        """Delete every row in a table (PostgREST: column IS NOT NULL)."""
+        async with httpx.AsyncClient(timeout=30.0) as cli:
+            r = await cli.delete(
+                self._table_url(table),
+                headers=self._headers(),
+                params={not_null_column: "not.is.null"},
+            )
+            r.raise_for_status()
+
+    async def delete_like(self, table: str, column: str, pattern: str) -> None:
+        """Delete rows where column matches a SQL LIKE pattern (PostgREST like filter)."""
+        async with httpx.AsyncClient(timeout=30.0) as cli:
+            r = await cli.delete(
+                self._table_url(table),
+                headers=self._headers(),
+                params={column: f"like.{pattern}"},
+            )
+            r.raise_for_status()
+
 
 supabase = SupabaseClient()

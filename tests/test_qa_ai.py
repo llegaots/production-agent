@@ -14,6 +14,19 @@ def test_ai_qa_reflective_loop(monkeypatch):
         "fingerprint": f"test_rain_delay_{uid}",
         "title": "Rain delay cluster",
         "persona_story": "Owner after storm",
+        "test_jobs": [
+            {
+                "id": "job_001",
+                "service_type": "window_cleaning",
+                "address": "100 Lakeshore, Pointe-Claire QC",
+                "estimated_minutes": 90,
+                "required_skills": ["ladder_cert"],
+                "required_equipment": ["ladder_28"],
+                "earliest_date": "2026-07-08",
+                "latest_date": "2026-07-08",
+                "price": 200,
+            }
+        ],
         "steps": [{"action": "plan", "scheduling_mode": "geo_first"}],
         "what_good_looks_like": "Jobs regrouped by zone",
     }
@@ -21,6 +34,19 @@ def test_ai_qa_reflective_loop(monkeypatch):
         "fingerprint": f"test_fill_trucks_{uid}",
         "title": "Fill trucks",
         "persona_story": "Slow Monday",
+        "test_jobs": [
+            {
+                "id": "job_001",
+                "service_type": "gutter_cleaning",
+                "address": "50 Elm, Beaconsfield QC",
+                "estimated_minutes": 120,
+                "required_skills": ["ladder_cert"],
+                "required_equipment": ["ladder_32"],
+                "earliest_date": "2026-07-07",
+                "latest_date": "2026-07-07",
+                "price": 300,
+            }
+        ],
         "steps": [{"action": "reorganize", "instruction": "fill crew days"}],
         "what_good_looks_like": "Higher utilization",
     }
@@ -32,7 +58,7 @@ def test_ai_qa_reflective_loop(monkeypatch):
             "executive_summary": "Thursday route crosses zones.",
             "placement_critiques": [
                 {
-                    "job_id": "job_001",
+                    "job_id": "qa_job_001",
                     "scheduled_day": "2025-05-22",
                     "crew_id": "crew_alpha",
                     "question": "Why send Alpha to Dorval after Pierrefonds?",
@@ -106,14 +132,15 @@ def test_ai_qa_reflective_loop(monkeypatch):
 
     with patch("app.qa_ai.runner.load_succeeded_cases", return_value=[]):
         with patch("app.qa_ai.runner.probe_llm_for_qa", AsyncMock(return_value=None)):
-            with patch("app.qa_ai.runner.design_test_case", _design):
-                with patch("app.qa_ai.runner.critique_schedule", _critique):
-                    with patch("app.qa_ai.runner.synthesize_run", _synth):
-                        with patch("app.qa_ai.runner.trigger_automatic_handoff", _noop_handoff):
-                            with patch.dict("os.environ", {"QA_MAX_CASES": "2", "QA_MAX_ITERATIONS": "2"}):
-                                report = asyncio.run(
-                                    AIQATeamRunner().run(auto_cursor_handoff=False)
-                                )
+            with patch("app.qa_ai.runner.prepare_qa_run", AsyncMock(return_value={"jobs_in_store": 0})):
+                with patch("app.qa_ai.runner.design_test_case", _design):
+                    with patch("app.qa_ai.runner.critique_schedule", _critique):
+                        with patch("app.qa_ai.runner.synthesize_run", _synth):
+                            with patch("app.qa_ai.runner.trigger_automatic_handoff", _noop_handoff):
+                                with patch.dict("os.environ", {"QA_MAX_CASES": "2", "QA_MAX_ITERATIONS": "2"}):
+                                    report = asyncio.run(
+                                        AIQATeamRunner().run(auto_cursor_handoff=False)
+                                    )
 
     assert report.run_id
     assert len(report.scenarios) >= 1

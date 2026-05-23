@@ -19,7 +19,8 @@ from .executor import apply_owner_retry, execute_case
 from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
-from .schedule_snapshot import plan_result_context
+from .schedule_snapshot import filter_qa_schedule_context
+from .store_setup import normalize_case, prepare_qa_run, validate_case
 from .test_job_manager import delete_test_jobs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -66,6 +67,9 @@ class AIQATeamRunner:
                 auto_cursor_handoff=auto_cursor_handoff,
             )
 
+        prep = await prepare_qa_run()
+        self.audit.log("AIQATeam", "prep", "Supabase-only QA store ready", detail=prep)
+
         succeeded_history = fingerprints_for_prompt()
         case_results: list[dict[str, Any]] = []
         failed_fingerprints: list[dict] = []
@@ -85,6 +89,13 @@ class AIQATeamRunner:
                 break
             if not case or not case.get("fingerprint"):
                 self.audit.log("CaseDesigner", "fail", "Could not design case; stopping loop.")
+                break
+
+            case = normalize_case(case)
+            case_err = validate_case(case)
+            if case_err:
+                self.audit.log("CaseDesigner", "invalid", case_err, detail=case, level="warning")
+                llm_errors.append(case_err)
                 break
 
             fp = case["fingerprint"]
@@ -125,9 +136,15 @@ class AIQATeamRunner:
                     retry = (prior_critique or {}).get("owner_retry")
                     if not retry:
                         break
-                    exec_result = await apply_owner_retry(retry, week_start=week_start)
+                    exec_result = await apply_owner_retry(
+                        retry, week_start=week_start, case=case
+                    )
 
                 schedule_ctx = exec_result.to_dict().get("final_plan") or {}
+                allowed_ids = set(exec_result.inserted_job_ids)
+                schedule_ctx = filter_qa_schedule_context(
+                    schedule_ctx, allowed_job_ids=allowed_ids
+                )
                 critique = await critique_schedule(
                     case=case,
                     schedule_context=schedule_ctx,
