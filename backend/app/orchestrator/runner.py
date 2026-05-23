@@ -200,9 +200,13 @@ def _iteration_user_message(ctx: OrchestratorContext) -> str:
     return msg
 
 
-def _run_iteration_programmatic(ctx: OrchestratorContext) -> None:
+def _run_iteration_programmatic(
+    ctx: OrchestratorContext,
+    *,
+    target_date: date | None = None,
+) -> None:
     """Deterministic tool sequence when Anthropic API is unavailable."""
-    primary = ctx.week_start.isoformat()
+    primary = (target_date or ctx.week_start).isoformat()
     execute_tool(
         "get_crew_availability",
         {"target_date": primary, "crew_ids": ctx.crew_ids or None},
@@ -245,12 +249,15 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
         week_start, week_end = _next_week_bounds()
 
     load_limit = inp.job_load_limit or 200
-    job_ids = _load_pending_job_ids(
-        week_start,
-        week_end,
-        limit=load_limit,
-        job_id_prefix=inp.job_id_prefix,
-    )
+    if inp.job_ids:
+        job_ids = list(inp.job_ids)
+    else:
+        job_ids = _load_pending_job_ids(
+            week_start,
+            week_end,
+            limit=load_limit,
+            job_id_prefix=inp.job_id_prefix,
+        )
     if not job_ids:
         raise ValueError(f"No pending jobs found for week {week_start} – {week_end}")
 
@@ -263,6 +270,7 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
         week_start=week_start,
         week_end=week_end,
         job_ids=job_ids,
+        crew_ids=list(inp.crew_ids or []),
         max_iterations=max_iter,
         use_llm_critic=inp.use_llm_critic,
     )
@@ -298,6 +306,8 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
             }
         ]
 
+    primary_target = inp.target_date or week_start
+
     for iteration in range(1, max_iter + 1):
         ctx.current_iteration = iteration
 
@@ -306,7 +316,7 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
             messages.append({"role": "user", "content": _iteration_user_message(ctx)})
             messages, final_text = _run_tool_loop(ctx, messages, langfuse_span=span)
         else:
-            _run_iteration_programmatic(ctx)
+            _run_iteration_programmatic(ctx, target_date=primary_target)
             final_text = "Programmatic orchestrator iteration (no Anthropic API key)."
             if span:
                 span.event(

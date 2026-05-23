@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from app.chat.schemas import ScheduleDecisionResponse
+from app.schedules.snapshot import upsert_schedule_from_run
 from app.tools._db import tools_db
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
@@ -54,6 +55,12 @@ def approve_schedule(schedule_id: UUID) -> ScheduleDecisionResponse:
             "id",
             _assigned_job_ids(attempt_id),
         ).execute()
+
+    run_updated = _get_run(schedule_id)
+    try:
+        upsert_schedule_from_run(run_updated)
+    except ValueError:
+        pass
 
     return ScheduleDecisionResponse(
         schedule_run_id=schedule_id,

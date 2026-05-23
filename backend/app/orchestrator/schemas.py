@@ -31,6 +31,18 @@ class ScheduleWeekInput(BaseModel):
         default=None,
         description="Cap jobs loaded from Supabase for this mission",
     )
+    job_ids: list[str] | None = Field(
+        default=None,
+        description="Explicit job ids to schedule (golden replay; skips pending-only query)",
+    )
+    crew_ids: list[str] | None = Field(
+        default=None,
+        description="Explicit crew ids for optimizer (golden replay)",
+    )
+    target_date: date | None = Field(
+        default=None,
+        description="Primary optimizer day; defaults to week_start",
+    )
 
 
 class ScheduleIterationSummary(BaseModel):

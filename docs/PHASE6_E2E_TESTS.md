@@ -64,3 +64,20 @@ Writes:
 - Raw rows: Supabase `eval_runs` (apply migration `20250524170000_eval_runs.sql`)
 
 Metrics per scenario: approval rate within iteration cap, mean/variance of iterations, total drive minutes, and preference violations.
+
+## Golden set (dispatcher-approved drift)
+
+After ~50 human-approved schedules, mark snapshots and measure orchestrator drift:
+
+```bash
+# Mark an approved schedule_run id as golden (refreshes snapshot)
+python -m evals.golden mark {schedule_id}
+
+# Replay all golden schedules and compare to snapshot
+python -m evals.golden run
+python -m evals.golden run --schedule-id {schedule_id}
+```
+
+- Table `schedules` (1:1 with `schedule_runs`) stores assignments, drive, and preference metrics; `golden=true` flags regression baselines.
+- Report: `evals/reports/golden_{timestamp}.md` — same crew %, same day %, drive Δ, preference violation Δ (no pass/fail).
+- Raw drift rows: `golden_eval_runs` (apply `20250524180000_schedules_golden.sql`).

@@ -251,6 +251,8 @@ def cleanup_scenario_prefix(prefix: str, db=None) -> None:
     )
     run_ids = [r["id"] for r in runs]
     if run_ids:
+        db.table("golden_eval_runs").delete().in_("schedule_id", run_ids).execute()
+        db.table("schedules").delete().in_("id", run_ids).execute()
         for rid in run_ids:
             db.table("schedule_run_iterations").delete().eq("schedule_run_id", rid).execute()
         db.table("schedule_runs").delete().in_("id", run_ids).execute()

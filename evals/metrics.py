@@ -36,7 +36,7 @@ class TrialMetrics:
         }
 
 
-def _final_attempt_id(result: ScheduleRunResult) -> str | None:
+def final_attempt_id(result: ScheduleRunResult) -> str | None:
     if result.final_schedule_attempt_id:
         return str(result.final_schedule_attempt_id)
     if result.iterations:
@@ -91,7 +91,7 @@ def collect_trial_metrics(
     *,
     iteration_cap: int,
 ) -> TrialMetrics:
-    attempt_id = _final_attempt_id(result)
+    attempt_id = final_attempt_id(result)
     drive = total_drive_minutes_from_attempt(attempt_id) if attempt_id else 0
 
     pref = 0
