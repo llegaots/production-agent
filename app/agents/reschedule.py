@@ -46,6 +46,7 @@ class ReschedulerAgent(Agent):
         new_earliest: Optional[date] = None,
         new_latest: Optional[date] = None,
         preferred_day: Optional[date] = None,
+        allowed_crew_ids: Optional[list[str]] = None,
     ) -> RescheduleResult:
         events: list[AgentEvent] = []
 
@@ -107,9 +108,15 @@ class ReschedulerAgent(Agent):
                 candidate_days.append(d)
             d = d + timedelta(days=1)
 
+        # Resolve allowed crews: prefer explicit parameter, fall back to store restriction.
+        effective_allowed = allowed_crew_ids or store.get_crew_restriction(job_id)
+
         candidates: list[dict] = []
         for day in candidate_days:
             for crew in store.list_crews():
+                # Apply crew restriction filter (instruction-level hard constraint).
+                if effective_allowed and crew.id not in effective_allowed:
+                    continue
                 if set(job.required_skills) - set(crew.skills):
                     continue
                 crew_kinds = set()
@@ -226,6 +233,8 @@ class ReschedulerAgent(Agent):
         plan.client_messages[job.id] = msg
         plan.events.extend(events)
         store.set_job_status(job.id, JobStatus.RESCHEDULED)
+        # Pin this placement so subsequent plan_week calls treat it as immutable.
+        store.pin_job(job.id, new_day, new_crew_id)
         store.set_plan(plan)
 
         return RescheduleResult(

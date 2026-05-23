@@ -117,8 +117,33 @@ async def execute_case(
                     "mode": intent.scheduling_mode.value,
                     "job_id": intent.job_id,
                     "target_day": intent.target_day.isoformat() if intent.target_day else None,
+                    "allowed_crew_ids": intent.allowed_crew_ids,
                 }
-                if intent.job_id and plan:
+
+                # Store crew restrictions extracted from the instruction so that
+                # subsequent plan_week calls apply them during placement.
+                if intent.job_id and intent.allowed_crew_ids:
+                    store.set_crew_restriction(
+                        normalize_qa_job_id(intent.job_id),
+                        intent.allowed_crew_ids,
+                    )
+
+                if intent.job_id:
+                    # When a reorganize instruction explicitly pins a job to a
+                    # specific date, we must first have a base plan before we
+                    # can reschedule.  If no plan exists yet (e.g. iteration 2
+                    # retry that replaces all steps with a single reorganize),
+                    # run plan_week first so the rescheduler has a plan to work
+                    # from.  This ensures the pin is applied and not overridden
+                    # by a bare replan.
+                    if not plan:
+                        sup = SupervisorAgent()
+                        plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                        out.plan_results.append(plan)
+                        out.final_plan = plan
+                        _refresh_job_lookup(out)
+                        store.set_plan(plan)
+
                     agent = ReschedulerAgent()
                     plan = store.get_plan() or plan
                     res = await agent.run_reschedule(
@@ -126,6 +151,7 @@ async def execute_case(
                         normalize_qa_job_id(intent.job_id),
                         intent.reason,
                         preferred_day=intent.target_day,
+                        allowed_crew_ids=intent.allowed_crew_ids or None,
                     )
                     plan = store.get_plan()
                     out.final_plan = plan

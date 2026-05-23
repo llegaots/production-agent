@@ -18,17 +18,27 @@ class ReorganizeIntent:
     reason: str = "Owner requested schedule change via chat"
     is_emergency: bool = False
     emergency_keywords: list[str] = field(default_factory=list)
+    # Crew restrictions parsed from instructions like "assign to crew_alpha or crew_delta"
+    allowed_crew_ids: list[str] = field(default_factory=list)
 
 
 _JOB_RE = re.compile(r"\b(job_[\w-]+)\b", re.I)
 _DAY_RE = re.compile(
     r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I
 )
+# Matches ISO date strings like 2026-07-09
+_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _MODE_RE = re.compile(
     r"(crew\s*fill|fill\s*(?:up\s*)?(?:the\s*)?crews|pack\s*crews|utilization|geo\s*first|"
     r"minimize\s*drive|location\s*first|proximity|balanced|balance|revenue|priority)",
     re.I,
 )
+# Matches crew IDs in "assign to crew_alpha or crew_delta" patterns
+_CREW_ASSIGN_RE = re.compile(
+    r"\bassign\b[^.]*?(crew_[\w]+(?:\s+or\s+crew_[\w]+)*)",
+    re.I,
+)
+_CREW_NAME_RE = re.compile(r"\bcrew_[\w]+\b", re.I)
 
 # Emergency patterns — any match escalates to CREW_FILL and first available slot.
 _EMERGENCY_PATTERNS = re.compile(
@@ -85,14 +95,33 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         job_id = jm.group(1).lower().replace("job-", "job_")
 
     # ── Target day extraction ─────────────────────────────────────────────────
+    # ISO date (YYYY-MM-DD) takes priority over day-of-week names so that
+    # explicit date bindings like "move job_002 to 2026-07-09" are pinned as
+    # hard constraints rather than being approximated by a weekday token.
     target_day = None
-    dm = _DAY_RE.search(lower)
-    if dm:
-        target_day = _parse_day_token(dm.group(1), week_start)
+    iso_match = _ISO_DATE_RE.search(text)
+    if iso_match:
+        try:
+            target_day = date.fromisoformat(iso_match.group(1))
+        except ValueError:
+            pass
+    if target_day is None:
+        dm = _DAY_RE.search(lower)
+        if dm:
+            target_day = _parse_day_token(dm.group(1), week_start)
 
     # Emergency with no explicit day → target the earliest slot (week_start)
     if is_emergency and target_day is None:
         target_day = week_start
+
+    # ── Crew restriction extraction ───────────────────────────────────────────
+    # Parse "assign to crew_alpha or crew_delta" → allowed_crew_ids = ["crew_alpha", "crew_delta"]
+    # These crew IDs are applied as hard candidate filters during placement.
+    allowed_crew_ids: list[str] = []
+    assign_match = _CREW_ASSIGN_RE.search(text)
+    if assign_match:
+        crew_candidates = _CREW_NAME_RE.findall(assign_match.group(1))
+        allowed_crew_ids = list(dict.fromkeys(c.lower() for c in crew_candidates))
 
     reason = text.strip()[:500] or "Owner requested schedule change via chat"
     if is_emergency:
@@ -107,4 +136,5 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         reason=reason,
         is_emergency=is_emergency,
         emergency_keywords=list(dict.fromkeys(k.strip() for k in emergency_matches)),
+        allowed_crew_ids=allowed_crew_ids,
     )

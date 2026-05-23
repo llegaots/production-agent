@@ -56,6 +56,7 @@ def seed(reset: bool = True) -> None:
         store.jobs.clear()
         store.latest_plan = None
         store.confirmed_plan = None
+        store.clear_pins_and_restrictions()
 
     # ── Equipment ─────────────────────────────────────────────────────────────
     equipment = [

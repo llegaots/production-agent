@@ -9,6 +9,12 @@ more reliable than asking one prompt to do both.
 Each crew has a fixed equipment loadout. The agent flags any job that
 requires equipment the assigned crew does not carry, and surfaces a clear
 remediation (swap crews, reschedule day, or rent).
+
+Equipment exclusivity: single-unit equipment (e.g. scissor_lift, where
+the company owns exactly one unit) can only be used by one job per day
+across the entire schedule. Any second job requiring the same single-unit
+equipment on the same day is deferred — the lower-revenue job is bumped
+to its next available date before the schedule is written.
 """
 from __future__ import annotations
 
@@ -49,20 +55,80 @@ class EquipmentAgent(Agent):
         conflicts: list[str] = []
         gaps: list[dict] = []
 
-        # daily equipment uniqueness check (same kind can't be on two crews if quantity=1)
-        per_day_equipment: dict[date, dict[EquipmentKind, list[str]]] = defaultdict(lambda: defaultdict(list))
+        # Track which jobs must be moved to unscheduled due to equipment conflicts.
+        conflict_deferred: list[str] = []
+
+        # ── Phase 1: Per-day per-job exclusivity lock ─────────────────────────
+        # For each equipment kind, compute total company-wide quantity.
+        # If the quantity is 1 (single-unit equipment like scissor_lift), at most
+        # one job per day across the ENTIRE schedule may require it.
+        # Lower-revenue jobs are bumped before the schedule is written.
+        total_qty_by_kind: dict[EquipmentKind, int] = {}
+        for eq in store.list_equipment():
+            total_qty_by_kind[eq.kind] = total_qty_by_kind.get(eq.kind, 0) + eq.quantity
+
+        # Equipment kinds that require a full-day exclusive commitment — even
+        # sequential jobs on the same crew cannot share these in one shift because
+        # of the setup/teardown/permit overhead involved.  Currently: scissor_lift.
+        _EXCLUSIVE_KINDS: frozenset[EquipmentKind] = frozenset({EquipmentKind.SCISSOR_LIFT})
+
+        # Build per-day per-kind job list from job requirements (not crew loadouts)
+        per_day_job_equip: dict[tuple[date, EquipmentKind], list[tuple[str, str, float]]] = defaultdict(list)
+        for entry in draft:
+            for jid in entry["job_ids"]:
+                job = jobs_by_id.get(jid)
+                if not job:
+                    continue
+                for kind in job.required_equipment:
+                    if kind in _EXCLUSIVE_KINDS:
+                        per_day_job_equip[(entry["day"], kind)].append(
+                            (jid, entry["crew_id"], job.price)
+                        )
+
+        for (day, kind), job_entries in per_day_job_equip.items():
+            total = total_qty_by_kind.get(kind, 1)
+            if len(job_entries) <= total:
+                continue
+            # More jobs than units — bump lower-revenue jobs
+            job_entries.sort(key=lambda x: -x[2])
+            excess = job_entries[total:]
+            conflict_msg = (
+                f"On {day.isoformat()}, {len(job_entries)} job(s) require "
+                f"{kind.value} but only {total} unit(s) exist. "
+                f"Lower-revenue job(s) bumped: {[jid for jid, _, _ in excess]}."
+            )
+            conflicts.append(conflict_msg)
+            await ctx.emit(
+                self.name,
+                "exclusivity_conflict",
+                f"Equipment exclusivity: {kind.value} on {day.isoformat()} — "
+                f"{len(job_entries)} jobs, {total} unit(s). Bumping lower-revenue jobs.",
+            )
+            for jid, crew_id, price in excess:
+                if jid not in conflict_deferred:
+                    conflict_deferred.append(jid)
+                    await ctx.emit(
+                        self.name,
+                        "defer",
+                        f"Job {jid} (${price:.0f}) bumped: {kind.value} exclusivity "
+                        f"conflict on {day.isoformat()} (crew {crew_id}).",
+                    )
+                    # Remove the bumped job from its draft entry
+                    for entry in draft:
+                        if entry["day"] == day and jid in entry["job_ids"]:
+                            entry["job_ids"] = [j for j in entry["job_ids"] if j != jid]
+
+        # ── Phase 2: Cross-crew equipment contention (multi-crew, same day) ───
+        # Guards against two different crews both needing the same scarce equipment.
+        per_day_crew_equip: dict[date, dict[EquipmentKind, list[str]]] = defaultdict(lambda: defaultdict(list))
         for entry in draft:
             crew = crews_by_id[entry["crew_id"]]
             for eid in crew.equipment_ids:
                 e = store.get_equipment(eid)
                 if e:
-                    per_day_equipment[entry["day"]][e.kind].append(crew.id)
+                    per_day_crew_equip[entry["day"]][e.kind].append(crew.id)
 
-        # Track which jobs must be moved to unscheduled due to equipment conflicts.
-        # We cannot silently return a schedule where a crew can't operate.
-        conflict_deferred: list[str] = []
-
-        for day, kinds in per_day_equipment.items():
+        for day, kinds in per_day_crew_equip.items():
             for kind, crew_ids in kinds.items():
                 if len(crew_ids) > 1:
                     total = sum(eq.quantity for eq in store.list_equipment() if eq.kind == kind)
@@ -80,9 +146,6 @@ class EquipmentAgent(Agent):
                             f"({len(crew_ids)} crews, {total} unit(s)). "
                             "Deferring lowest-value jobs from conflicting crews.",
                         )
-                        # Resolve: identify which crew-day entries on this day carry
-                        # the contested equipment kind and defer jobs from the
-                        # excess crew-days (lowest-revenue first).
                         conflicting_entries = [
                             e for e in draft
                             if e["day"] == day
@@ -91,8 +154,6 @@ class EquipmentAgent(Agent):
                                 for eid in crews_by_id[e["crew_id"]].equipment_ids
                             )
                         ]
-                        # Sort entries by total job revenue desc — keep highest-revenue
-                        # entries, defer the rest.
                         conflicting_entries.sort(
                             key=lambda e: -sum(
                                 (jobs_by_id.get(jid) and jobs_by_id[jid].price or 0)
@@ -109,7 +170,6 @@ class EquipmentAgent(Agent):
                                         f"Job {jid} deferred: {kind.value} conflict on "
                                         f"{day.isoformat()} with crew {excess_entry['crew_id']}.",
                                     )
-                            # Remove the deferred jobs from the draft entry.
                             excess_entry["job_ids"] = [
                                 jid for jid in excess_entry["job_ids"]
                                 if jid not in conflict_deferred

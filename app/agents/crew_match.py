@@ -15,6 +15,7 @@ and time budgets and may push jobs back into ``unscheduled``.
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 
 from ..models import Crew, EquipmentKind, Job
 from ..scheduling_prefs import SchedulingMode, cluster_sort_key, placement_score_bonus
@@ -99,6 +100,24 @@ class CrewMatchAgent(Agent):
         draft_plan: list[dict] = []
         unscheduled: list[str] = []
 
+        # ── Pre-place pinned jobs (immutable placements from prior reschedules) ─
+        # Jobs pinned via store.pin_job() (e.g. after an owner "move X to date Y"
+        # instruction) are placed directly before the optimization loop runs.
+        # They are excluded from the candidate pool so the optimizer cannot override
+        # them in subsequent plan iterations.
+        pinned_job_ids: set[str] = set()
+        for job_id, pin in store.job_pins.items():
+            job = jobs_by_id.get(job_id)
+            if not job:
+                continue
+            pin_day: date = pin["day"]
+            pin_crew_id: str = pin["crew_id"]
+            if pin_day not in days:
+                continue  # pin is outside this planning week
+            draft_plan.append({"crew_id": pin_crew_id, "day": pin_day, "job_ids": [job_id]})
+            used[(pin_crew_id, pin_day)] = used.get((pin_crew_id, pin_day), 0) + job.estimated_minutes
+            pinned_job_ids.add(job_id)
+
         # Sort clusters: default heaviest-first; REVENUE_PRIORITY sorts by price.
         order = sorted(
             range(len(clusters)),
@@ -118,6 +137,13 @@ class CrewMatchAgent(Agent):
                 if self._crew_covers_skills(c, jobs)
                 and self._crew_covers_equipment(c, jobs, crew_equipment_kinds)
             ]
+            # Apply instruction-level crew restrictions from the store.
+            # When an owner instruction says "assign job X to crew_alpha or crew_delta",
+            # the restriction is stored per-job and enforced here as a hard filter.
+            for job in jobs:
+                allowed = store.get_crew_restriction(job.id)
+                if allowed:
+                    eligible = [c for c in eligible if c.id in allowed]
             if not eligible:
                 return False
 
@@ -165,7 +191,13 @@ class CrewMatchAgent(Agent):
 
         for idx in order:
             cluster = clusters[idx]
-            cluster_jobs = [jobs_by_id[j] for j in cluster["job_ids"]]
+            # Exclude already-pinned jobs from further optimization.
+            cluster_jobs = [
+                jobs_by_id[j] for j in cluster["job_ids"]
+                if j not in pinned_job_ids
+            ]
+            if not cluster_jobs:
+                continue
             total_minutes = sum(j.estimated_minutes for j in cluster_jobs)
 
             if place(cluster_jobs, "assign"):

@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import date
 
 from ..models import CrewDay, Job, ScheduledStop
+from ..scheduling_prefs import SchedulingMode
 from .base import Agent, AgentContext, drive_minutes, haversine_km
 
 
@@ -31,6 +32,7 @@ class TimeBudgetAgent(Agent):
         )
         await ctx.emit(self.name, "start", "Sequencing stops & validating time budgets.")
 
+        mode: SchedulingMode = ctx.blackboard.get("scheduling_mode", ctx.scheduling_mode)
         crew_days: list[CrewDay] = []
         any_overbook = 0
 
@@ -38,6 +40,11 @@ class TimeBudgetAgent(Agent):
             crew = crews_by_id[entry["crew_id"]]
             day: date = entry["day"]
             job_objs: list[Job] = [jobs_by_id[j] for j in entry["job_ids"]]
+
+            # Revenue-priority mode: assign earliest start_minute to highest-price job.
+            # Sort descending by price so stop #1 gets the first slot of the day.
+            if mode == SchedulingMode.REVENUE_PRIORITY:
+                job_objs.sort(key=lambda j: -j.price)
 
             stops: list[ScheduledStop] = []
             cur_lat, cur_lng = crew.base_lat, crew.base_lng

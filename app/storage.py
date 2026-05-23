@@ -28,6 +28,12 @@ class Store:
         self.confirmed_plan: Optional[PlanResult] = None
         self.scheduling_mode: SchedulingMode = DEFAULT_MODE
         self.last_plan_id: Optional[str] = None
+        # Pinned placements: job_id → {"day": date, "crew_id": str}
+        # Jobs with a pin must be placed on that exact day/crew by the scheduler.
+        self.job_pins: dict[str, dict] = {}
+        # Crew restrictions: job_id → [allowed_crew_id, ...]
+        # CrewMatchAgent enforces these as hard filters during placement.
+        self.job_crew_restrictions: dict[str, list[str]] = {}
 
     # ---- jobs ----
     def upsert_job(self, job: Job) -> Job:
@@ -93,6 +99,39 @@ class Store:
                 if s.job_id == job_id:
                     return d.day
         return None
+
+    # ---- job pins ----
+
+    def pin_job(self, job_id: str, day: date, crew_id: str) -> None:
+        """Record an immutable placement constraint for a job."""
+        with self._lock:
+            self.job_pins[job_id] = {"day": day, "crew_id": crew_id}
+
+    def get_job_pin(self, job_id: str) -> Optional[dict]:
+        return self.job_pins.get(job_id)
+
+    def clear_job_pin(self, job_id: str) -> None:
+        with self._lock:
+            self.job_pins.pop(job_id, None)
+
+    # ---- crew restrictions ----
+
+    def set_crew_restriction(self, job_id: str, allowed_crew_ids: list[str]) -> None:
+        """Restrict a job to specific crew(s) during placement."""
+        with self._lock:
+            if allowed_crew_ids:
+                self.job_crew_restrictions[job_id] = list(allowed_crew_ids)
+            else:
+                self.job_crew_restrictions.pop(job_id, None)
+
+    def get_crew_restriction(self, job_id: str) -> Optional[list[str]]:
+        return self.job_crew_restrictions.get(job_id)
+
+    def clear_pins_and_restrictions(self) -> None:
+        """Clear all pins and crew restrictions (call on full reset)."""
+        with self._lock:
+            self.job_pins.clear()
+            self.job_crew_restrictions.clear()
 
 
 store = Store()

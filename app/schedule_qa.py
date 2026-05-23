@@ -180,6 +180,7 @@ class ScheduleValidator:
         self._check_no_cancelled_jobs()
         self._check_skill_requirements()
         self._check_equipment_requirements()
+        self._check_equipment_exclusivity()
         self._check_capacity_flag_consistency()
         self._check_date_windows()
         self._check_stop_ordering_and_overlap()
@@ -279,6 +280,55 @@ class ScheduleValidator:
                         day=cd.day,
                         detail={"missing_equipment": [e.value for e in missing]},
                     )
+
+    def _check_equipment_exclusivity(self) -> None:
+        """Scissor-lift double-booking is a hard conflict with severity=critical.
+
+        The scissor_lift requires full-day setup/teardown at a single location.
+        At most one job per day may require it, regardless of which crew is
+        assigned.  Any second scissor_lift job on the same calendar day is a
+        critical error — it would cause a field failure.
+        """
+        # Only enforce exclusivity for equipment that requires a full-day
+        # commitment (scissor_lift).  Standard reusable tools (ladders, poles,
+        # pressure washers) are NOT subject to this rule.
+        _EXCLUSIVE_KINDS = {EquipmentKind.SCISSOR_LIFT}
+
+        total_by_kind: dict[EquipmentKind, int] = {}
+        for eq in self._store.list_equipment():
+            total_by_kind[eq.kind] = total_by_kind.get(eq.kind, 0) + eq.quantity
+
+        # Collect job_ids per (day, equipment_kind) pair
+        per_day_kind: dict[tuple, list[str]] = {}
+        for cd in self._plan.plan.days:
+            for stop in cd.stops:
+                job = self._jobs_by_id.get(stop.job_id)
+                if not job:
+                    continue
+                for kind in job.required_equipment:
+                    if kind in _EXCLUSIVE_KINDS:
+                        key = (cd.day, kind)
+                        per_day_kind.setdefault(key, []).append(stop.job_id)
+
+        for (day, kind), job_ids in per_day_kind.items():
+            total = total_by_kind.get(kind, 0)
+            if len(job_ids) > max(1, total):
+                self._err(
+                    "equipment_exclusivity_violation",
+                    f"CRITICAL: On {day.isoformat()}, {len(job_ids)} job(s) require "
+                    f"{kind.value} but only {total} unit(s) exist in the company fleet. "
+                    f"Jobs in conflict: {job_ids}. "
+                    f"This is a hard equipment exclusivity violation — the {kind.value} "
+                    f"cannot be committed to two locations on the same day. "
+                    f"Move the lower-revenue job to a different day.",
+                    day=day,
+                    detail={
+                        "equipment_kind": kind.value,
+                        "conflicting_jobs": job_ids,
+                        "available_units": total,
+                        "severity": "critical",
+                    },
+                )
 
     def _check_capacity_flag_consistency(self) -> None:
         """The overbooked flag must match day_load > crew.daily_minutes (no silent overbooking)."""
