@@ -14,12 +14,15 @@ and time budgets and may push jobs back into ``unscheduled``.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from ..models import Crew, EquipmentKind, Job
 from ..scheduling_prefs import SchedulingMode, cluster_sort_key, placement_score_bonus
 from ..storage import store
-from .base import Agent, AgentContext, haversine_km, week_days
+from .base import Agent, AgentContext, drive_minutes, haversine_km, week_days
+
+logger = logging.getLogger(__name__)
 
 
 class CrewMatchAgent(Agent):
@@ -105,6 +108,26 @@ class CrewMatchAgent(Agent):
             key=lambda i: -cluster_sort_key(mode, clusters[i]["job_ids"], jobs_by_id),
         )
 
+        def _estimate_drive_budget(crew: Crew, jobs: list[Job]) -> int:
+            """Estimate total drive time for this crew serving these jobs.
+
+            Uses haversine from base → first job → between stops → back to base.
+            This is the same approach as TimeBudgetAgent, so capacity checks here
+            align with what the final schedule actually produces, preventing
+            crew-days from being overbooked after TimeBudgetAgent runs.
+            """
+            if not jobs:
+                return 0
+            ordered = self._ordered_for_route(crew, jobs)
+            total_km = 0.0
+            cur_lat, cur_lng = crew.base_lat, crew.base_lng
+            for j in ordered:
+                total_km += haversine_km(cur_lat, cur_lng, j.lat, j.lng)
+                cur_lat, cur_lng = j.lat, j.lng
+            # Return to base
+            total_km += haversine_km(cur_lat, cur_lng, crew.base_lat, crew.base_lng)
+            return drive_minutes(total_km)
+
         def place(jobs: list[Job], emit_phase: str) -> bool:
             """Place a contiguous batch of jobs on the best (crew, day) slot.
 
@@ -119,12 +142,13 @@ class CrewMatchAgent(Agent):
                 and self._crew_covers_equipment(c, jobs, crew_equipment_kinds)
             ]
             if not eligible:
+                logger.debug(
+                    "No eligible crew for jobs %s (skills: %s, equipment: %s)",
+                    [j.id for j in jobs],
+                    [s.value for j in jobs for s in j.required_skills],
+                    [e.value for j in jobs for e in j.required_equipment],
+                )
                 return False
-
-            # Reserve a rough drive budget: 20 min round-trip to area + 15 min
-            # between stops. The TimeBudgetAgent computes the real number; this
-            # is just enough headroom that we don't overbook by a wide margin.
-            drive_budget = 20 + 15 * max(0, len(jobs) - 1)
 
             avg_drive_km = sum(
                 haversine_km(crew.base_lat, crew.base_lng, j.lat, j.lng)
@@ -138,6 +162,9 @@ class CrewMatchAgent(Agent):
                 crew_drive = sum(haversine_km(crew.base_lat, crew.base_lng, j.lat, j.lng) for j in jobs) / max(
                     1, len(jobs)
                 )
+                # Use per-crew realistic drive estimate so capacity checks match
+                # TimeBudgetAgent output and crew-days don't end up overbooked.
+                drive_budget = _estimate_drive_budget(crew, jobs)
                 for day in days:
                     # Respect each job's date window: the day must fall within
                     # every job's [earliest_date, latest_date] range.
@@ -157,10 +184,18 @@ class CrewMatchAgent(Agent):
             _, crew, day = candidates[0]
 
             ordered_jobs = self._ordered_for_route(crew, jobs)
+            drive_budget = _estimate_drive_budget(crew, ordered_jobs)
             draft_plan.append(
                 {"crew_id": crew.id, "day": day, "job_ids": [j.id for j in ordered_jobs]}
             )
-            used[(crew.id, day)] = used.get((crew.id, day), 0) + total
+            # Track work + estimated drive so subsequent placements respect the
+            # realistic day load and capacity is not exceeded.
+            used[(crew.id, day)] = used.get((crew.id, day), 0) + total + drive_budget
+            logger.debug(
+                "Placed %s jobs on %s/%s: work=%d drive_est=%d used=%d cap=%d",
+                len(jobs), crew.id, day, total, drive_budget,
+                used[(crew.id, day)], crew.daily_minutes,
+            )
             return True
 
         for idx in order:

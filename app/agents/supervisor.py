@@ -16,6 +16,7 @@ caller so the UI can render a live transcript of the run.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, timedelta
 from typing import Optional
 
@@ -38,6 +39,8 @@ from .equipment import EquipmentAgent
 from .geo_cluster import GeoClusterAgent
 from .plan_reviewer import PlanReviewerAgent
 from .time_budget import TimeBudgetAgent
+
+logger = logging.getLogger(__name__)
 
 
 def _next_monday(today: Optional[date] = None) -> date:
@@ -164,6 +167,12 @@ class SupervisorAgent(Agent):
             for w in cd.warnings:
                 conflicts.append(f"{cd.crew_id} {cd.day.isoformat()}: {w}")
 
+        # Pre-return validation: catch overbooked days, orphan stops, and
+        # capacity violations so they are surfaced in the plan's conflicts list
+        # rather than silently passed to dispatch.
+        validation_issues = await self._validate_plan(ctx, crew_days, unscheduled)
+        conflicts.extend(validation_issues)
+
         summary = await self._summarize(ctx, crew_days, unscheduled, conflicts)
 
         plan = WeekPlan(
@@ -243,6 +252,72 @@ class SupervisorAgent(Agent):
             f"Evicted {len(bumped_job_ids)} job(s) with unresolvable equipment conflicts "
             f"to unscheduled: {', '.join(sorted(bumped_job_ids))}.",
         )
+
+    async def _validate_plan(
+        self,
+        ctx: AgentContext,
+        crew_days: list[CrewDay],
+        unscheduled: list[str],
+    ) -> list[str]:
+        """Validate the assembled plan and return a list of conflict descriptions.
+
+        Checks performed:
+        - Overbooked crew-days (work + drive > capacity)
+        - Stops referencing job IDs not present in the store
+        - Jobs from ctx.jobs that are missing from both scheduled and unscheduled lists
+        """
+        issues: list[str] = []
+        jobs_in_ctx = {j.id for j in ctx.jobs}
+        scheduled_ids: set[str] = set()
+
+        for cd in crew_days:
+            crew_obj = store.get_crew(cd.crew_id)
+            cap = crew_obj.daily_minutes if crew_obj else 480
+
+            for stop in cd.stops:
+                scheduled_ids.add(stop.job_id)
+                # Flag stops that reference a job not in the store.
+                if store.get_job(stop.job_id) is None:
+                    issues.append(
+                        f"Orphan stop: {stop.job_id} on {cd.crew_id}/{cd.day} "
+                        "has no backing job record."
+                    )
+
+            # Flag overbooked days (TimeBudgetAgent marks them; double-check here).
+            if cd.overbooked:
+                day_load = cd.total_work_minutes + cd.total_drive_minutes
+                issues.append(
+                    f"Overbooked: {cd.crew_id} on {cd.day} — "
+                    f"{day_load} min vs {cap} min capacity."
+                )
+                logger.warning(
+                    "Overbooked crew-day %s/%s: %d min vs %d min cap",
+                    cd.crew_id, cd.day, day_load, cap,
+                )
+
+        # Any job from ctx.jobs that is not scheduled or explicitly unscheduled
+        # has been silently dropped — surface this as a conflict.
+        accounted_for = scheduled_ids | set(unscheduled)
+        dropped = jobs_in_ctx - accounted_for
+        for jid in sorted(dropped):
+            issues.append(f"Dropped: job {jid} was in planning window but missing from schedule output.")
+            logger.error("Job %s dropped from plan output silently.", jid)
+
+        if issues:
+            await ctx.emit(
+                self.name,
+                "validation",
+                f"Schedule validation found {len(issues)} issue(s).",
+                detail={"issues": issues},
+            )
+        else:
+            await ctx.emit(
+                self.name,
+                "validation",
+                "Schedule validation passed — no overbooked days, orphan stops, or dropped jobs.",
+            )
+
+        return issues
 
     async def _summarize(
         self,

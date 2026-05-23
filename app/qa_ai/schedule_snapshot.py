@@ -8,9 +8,14 @@ from ..models import Job, PlanResult, WeekPlan
 from ..storage import store
 
 
-def _job_row(job: Optional[Job]) -> dict[str, Any]:
+def _job_row(job: Optional[Job], fallback_id: str = "unknown") -> dict[str, Any]:
+    """Serialize a job record; falls back to fallback_id when job is not in store.
+
+    Using the actual stop.job_id as fallback ensures that test-job stops don't
+    appear as phantom 'unknown' entries after cleanup removes them from the store.
+    """
     if not job:
-        return {"job_id": "unknown"}
+        return {"job_id": fallback_id}
     return {
         "job_id": job.id,
         "client_id": job.client_id,
@@ -47,7 +52,7 @@ def plan_to_operator_context(
             job = store.get_job(s.job_id)
             stops.append(
                 {
-                    **_job_row(job),
+                    **_job_row(job, fallback_id=s.job_id),
                     "order": s.order,
                     "start_minute": s.start_minute,
                     "start_time": _minute_label(s.start_minute),
@@ -70,7 +75,7 @@ def plan_to_operator_context(
             }
         )
 
-    unscheduled = [_job_row(store.get_job(jid)) for jid in plan.unscheduled_job_ids]
+    unscheduled = [_job_row(store.get_job(jid), fallback_id=jid) for jid in plan.unscheduled_job_ids]
 
     return {
         "week_start": plan.week_start.isoformat(),

@@ -1,6 +1,7 @@
 """Execute AI-designed QA scenarios against the real agent stack."""
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Optional
 
@@ -14,6 +15,8 @@ from ..storage import store
 from ..supabase_store import persist_plan
 from .schedule_snapshot import plan_result_context
 from .test_job_manager import delete_test_jobs, insert_test_jobs
+
+logger = logging.getLogger(__name__)
 
 
 class CaseExecutionResult:
@@ -93,21 +96,40 @@ async def execute_case(
 
     _geocoder.geocode = _fast_geocode
 
-    try:
-        # If the case designer provided custom test jobs, insert them into the
-        # store AND Supabase so the scheduler sees them as real persisted jobs.
-        test_job_defs = case.get("test_jobs") or []
-        inserted_job_ids: list[str] = []
-        if test_job_defs:
+    # If the case designer provided custom test jobs, insert them into the
+    # store AND Supabase so the scheduler sees them as real persisted jobs.
+    test_job_defs = case.get("test_jobs") or []
+    inserted_job_ids: list[str] = []
+    if test_job_defs:
+        try:
             inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+            logger.info(
+                "QA[%s] inserted %d test jobs: %s",
+                run_id, len(inserted_job_ids), inserted_job_ids,
+            )
+            # Verify inserted jobs are actually retrievable from store before scheduling.
+            missing_from_store = [jid for jid in inserted_job_ids if store.get_job(jid) is None]
+            if missing_from_store:
+                logger.error(
+                    "QA[%s] test job insertion FAILED for %s — not found in store after insert",
+                    run_id, missing_from_store,
+                )
             out.events.append({
                 "step": -1,
                 "action": "test_jobs_inserted",
                 "count": len(inserted_job_ids),
                 "ids": inserted_job_ids,
+                "store_verified": len(missing_from_store) == 0,
+                "missing_from_store": missing_from_store,
             })
-    except Exception:
-        inserted_job_ids = []
+        except Exception as exc:
+            logger.error("QA[%s] test job insertion raised an exception: %s", run_id, exc)
+            inserted_job_ids = []
+            out.events.append({
+                "step": -1,
+                "action": "test_jobs_insertion_failed",
+                "error": str(exc),
+            })
 
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
@@ -219,6 +241,42 @@ async def execute_case(
         # Always restore, even if an exception fires mid-execution.
         _llm.chat = _original_chat
         _geocoder.geocode = _original_geocode
+
+    # Verify that all inserted test jobs appear in the final plan before cleanup.
+    # This regression check catches silent scheduling failures early.
+    if inserted_job_ids and out.final_plan:
+        scheduled_ids = {
+            s.job_id
+            for d in out.final_plan.plan.days
+            for s in d.stops
+        }
+        unscheduled_ids = set(out.final_plan.plan.unscheduled_job_ids)
+        missing_test_jobs = [
+            jid for jid in inserted_job_ids
+            if jid not in scheduled_ids and jid not in unscheduled_ids
+        ]
+        scheduled_test_jobs = [jid for jid in inserted_job_ids if jid in scheduled_ids]
+        deferred_test_jobs = [jid for jid in inserted_job_ids if jid in unscheduled_ids]
+
+        if missing_test_jobs:
+            logger.error(
+                "QA[%s] REGRESSION: %d test job(s) vanished from plan output (not scheduled, "
+                "not unscheduled): %s. Planner may have silently dropped them.",
+                run_id, len(missing_test_jobs), missing_test_jobs,
+            )
+        logger.info(
+            "QA[%s] test job outcome — scheduled: %s, deferred: %s, missing: %s",
+            run_id, scheduled_test_jobs, deferred_test_jobs, missing_test_jobs,
+        )
+        out.events.append({
+            "step": "regression_check",
+            "action": "test_job_regression",
+            "inserted": inserted_job_ids,
+            "scheduled": scheduled_test_jobs,
+            "deferred": deferred_test_jobs,
+            "missing": missing_test_jobs,
+            "passed": len(missing_test_jobs) == 0,
+        })
 
     # Clean up test jobs from store and Supabase after the case completes.
     if inserted_job_ids:
