@@ -53,13 +53,34 @@ async def execute_case(
     # store AND Supabase so the scheduler sees them as real persisted jobs.
     test_job_defs = case.get("test_jobs") or []
     inserted_job_ids: list[str] = []
+    evicted_seed_ids: list[str] = []
     if test_job_defs:
         inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+
+        # When explicit test jobs are provided the planner must schedule ONLY
+        # those jobs.  Remove all seed jobs (those not in inserted_job_ids) so
+        # the scheduler cannot accidentally pick up the default 27-job dataset.
+        evicted_seed_ids = [
+            jid for jid in list(store.jobs.keys())
+            if jid not in inserted_job_ids
+        ]
+        for jid in evicted_seed_ids:
+            del store.jobs[jid]
+
         out.events.append({
             "step": -1,
             "action": "test_jobs_inserted",
             "count": len(inserted_job_ids),
             "ids": inserted_job_ids,
+            "seed_jobs_evicted": len(evicted_seed_ids),
+            "active_job_list": "test_jobs_only",
+        })
+    else:
+        out.events.append({
+            "step": -1,
+            "action": "job_list_source",
+            "active_job_list": "seed_database",
+            "count": len(store.list_jobs()),
         })
 
     steps = case.get("steps") or []
