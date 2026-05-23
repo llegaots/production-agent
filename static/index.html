@@ -890,7 +890,7 @@
           }
         },
 
-        async pollQaUntilDone(runId, maxMs = 600000) {
+        async pollQaUntilDone(runId, maxMs = 300000) {
           const started = Date.now();
           while (Date.now() - started < maxMs) {
             await new Promise(r => setTimeout(r, 2000));

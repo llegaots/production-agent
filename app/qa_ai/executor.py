@@ -49,123 +49,176 @@ async def execute_case(
     # Always reset to a clean known state before each case.
     seed(reset=True)
 
-    # If the case designer provided custom test jobs, insert them into the
-    # store AND Supabase so the scheduler sees them as real persisted jobs.
-    test_job_defs = case.get("test_jobs") or []
-    inserted_job_ids: list[str] = []
-    if test_job_defs:
-        inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
-        out.events.append({
-            "step": -1,
-            "action": "test_jobs_inserted",
-            "count": len(inserted_job_ids),
-            "ids": inserted_job_ids,
-        })
+    # Disable LLM for the scheduler pipeline during QA execution.
+    # The planning agents (ClientComms, PlanReviewer) make 40-60 LLM calls
+    # per plan run (one per scheduled job × critic iterations). We don't need
+    # polished client messages to evaluate schedule logic — template fallbacks
+    # are sufficient. The critic and designer run AFTER this context exits,
+    # so they still use the real LLM.
+    from ..llm import llm as _llm
+    _original_chat = _llm.chat
+
+    async def _noop(*a, **kw):
+        return None
+
+    _llm.chat = _noop
+
+    # Also skip real geocoding during QA — use stored coords to avoid
+    # Google API round-trips for every test job address (adds 2-5s per job).
+    from ..geocode import geocoder as _geocoder
+    _original_geocode = _geocoder.geocode
+
+    async def _fast_geocode(address: str):
+        from ..geocode import GeocodeResult
+        # Try to find exact match in current store jobs (test jobs have default coords).
+        for j in store.list_jobs():
+            if j.address == address:
+                return GeocodeResult(
+                    input_address=address, success=True,
+                    lat=j.lat, lng=j.lng,
+                    formatted_address=address, confidence=0.9,
+                    needs_review=False, in_service_area=True,
+                    location_type="ROOFTOP", postal_code="H9X",
+                    province="QC", source="cache",
+                )
+        from ..seed import BASE_LAT, BASE_LNG
+        return GeocodeResult(
+            input_address=address, success=True,
+            lat=BASE_LAT, lng=BASE_LNG,
+            formatted_address=address, confidence=0.8,
+            needs_review=False, in_service_area=True,
+            location_type="APPROXIMATE", postal_code="H9X",
+            province="QC", source="cache",
+        )
+
+    _geocoder.geocode = _fast_geocode
+
+    try:
+        # If the case designer provided custom test jobs, insert them into the
+        # store AND Supabase so the scheduler sees them as real persisted jobs.
+        test_job_defs = case.get("test_jobs") or []
+        inserted_job_ids: list[str] = []
+        if test_job_defs:
+            inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+            out.events.append({
+                "step": -1,
+                "action": "test_jobs_inserted",
+                "count": len(inserted_job_ids),
+                "ids": inserted_job_ids,
+            })
+    except Exception:
+        inserted_job_ids = []
 
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
 
-    for i, step in enumerate(steps):
-        action = (step.get("action") or "").lower().replace("-", "_")
-        evt: dict[str, Any] = {"step": i, "action": action}
+    try:
+        for i, step in enumerate(steps):
+            action = (step.get("action") or "").lower().replace("-", "_")
+            evt: dict[str, Any] = {"step": i, "action": action}
 
-        if action == "plan":
-            mode = parse_mode(step.get("scheduling_mode") or "balanced")
-            out.scheduling_mode = mode.value
-            store.scheduling_mode = mode
-            sup = SupervisorAgent()
-            plan = await sup.plan_week(ws, scheduling_mode=mode)
-            out.plan_results.append(plan)
-            out.final_plan = plan
-            store.set_plan(plan)
-            try:
-                await persist_plan(plan)
-            except Exception:
-                pass
-            evt["scheduling_mode"] = mode.value
-
-        elif action == "reorganize":
-            text = step.get("instruction") or step.get("text") or ""
-            out.owner_instructions.append(text)
-            intent = parse_reorganize_instruction(text, ws)
-            out.scheduling_mode = intent.scheduling_mode.value
-            store.scheduling_mode = intent.scheduling_mode
-            evt["parsed_intent"] = {
-                "mode": intent.scheduling_mode.value,
-                "job_id": intent.job_id,
-                "target_day": intent.target_day.isoformat() if intent.target_day else None,
-            }
-            if intent.job_id and plan:
-                agent = ReschedulerAgent()
-                plan = store.get_plan() or plan
-                res = await agent.run_reschedule(
-                    plan,
-                    intent.job_id,
-                    intent.reason,
-                    preferred_day=intent.target_day,
-                )
-                plan = store.get_plan()
-                out.final_plan = plan
-                evt["reschedule"] = {
-                    "succeeded": res.succeeded,
-                    "new_day": res.new_day.isoformat() if res.new_day else None,
-                    "new_crew_id": res.new_crew_id,
-                }
-            else:
+            if action == "plan":
+                mode = parse_mode(step.get("scheduling_mode") or "balanced")
+                out.scheduling_mode = mode.value
+                store.scheduling_mode = mode
                 sup = SupervisorAgent()
-                plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                plan = await sup.plan_week(ws, scheduling_mode=mode)
                 out.plan_results.append(plan)
                 out.final_plan = plan
+                store.set_plan(plan)
                 try:
                     await persist_plan(plan)
                 except Exception:
                     pass
+                evt["scheduling_mode"] = mode.value
 
-        elif action == "reschedule":
-            job_id = step.get("job_id")
-            reason = step.get("reason") or "Owner requested change"
-            if not plan:
-                evt["error"] = "no_plan_before_reschedule"
-            elif job_id:
-                agent = ReschedulerAgent()
-                pref = step.get("preferred_day")
-                pref_date = date.fromisoformat(pref) if pref else None
-                res = await agent.run_reschedule(
-                    plan,
-                    job_id,
-                    reason,
-                    preferred_day=pref_date,
-                )
-                plan = store.get_plan()
-                out.final_plan = plan
-                evt["reschedule"] = {
-                    "job_id": job_id,
-                    "succeeded": res.succeeded,
-                    "new_day": res.new_day.isoformat() if res.new_day else None,
+            elif action == "reorganize":
+                text = step.get("instruction") or step.get("text") or ""
+                out.owner_instructions.append(text)
+                intent = parse_reorganize_instruction(text, ws)
+                out.scheduling_mode = intent.scheduling_mode.value
+                store.scheduling_mode = intent.scheduling_mode
+                evt["parsed_intent"] = {
+                    "mode": intent.scheduling_mode.value,
+                    "job_id": intent.job_id,
+                    "target_day": intent.target_day.isoformat() if intent.target_day else None,
                 }
+                if intent.job_id and plan:
+                    agent = ReschedulerAgent()
+                    plan = store.get_plan() or plan
+                    res = await agent.run_reschedule(
+                        plan,
+                        intent.job_id,
+                        intent.reason,
+                        preferred_day=intent.target_day,
+                    )
+                    plan = store.get_plan()
+                    out.final_plan = plan
+                    evt["reschedule"] = {
+                        "succeeded": res.succeeded,
+                        "new_day": res.new_day.isoformat() if res.new_day else None,
+                        "new_crew_id": res.new_crew_id,
+                    }
+                else:
+                    sup = SupervisorAgent()
+                    plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                    out.plan_results.append(plan)
+                    out.final_plan = plan
+                    try:
+                        await persist_plan(plan)
+                    except Exception:
+                        pass
 
-        elif action == "plan_then_reschedule":
-            mode = parse_mode(step.get("scheduling_mode") or "balanced")
-            job_id = step.get("job_id")
-            reason = step.get("reason") or "QA scenario disruption"
-            sup = SupervisorAgent()
-            plan = await sup.plan_week(ws, scheduling_mode=mode)
-            out.plan_results.append(plan)
-            out.scheduling_mode = mode.value
-            if job_id:
-                agent = ReschedulerAgent()
-                res = await agent.run_reschedule(plan, job_id, reason)
-                plan = store.get_plan()
-                evt["reschedule"] = {"succeeded": res.succeeded}
+            elif action == "reschedule":
+                job_id = step.get("job_id")
+                reason = step.get("reason") or "Owner requested change"
+                if not plan:
+                    evt["error"] = "no_plan_before_reschedule"
+                elif job_id:
+                    agent = ReschedulerAgent()
+                    pref = step.get("preferred_day")
+                    pref_date = date.fromisoformat(pref) if pref else None
+                    res = await agent.run_reschedule(
+                        plan,
+                        job_id,
+                        reason,
+                        preferred_day=pref_date,
+                    )
+                    plan = store.get_plan()
+                    out.final_plan = plan
+                    evt["reschedule"] = {
+                        "job_id": job_id,
+                        "succeeded": res.succeeded,
+                        "new_day": res.new_day.isoformat() if res.new_day else None,
+                    }
+
+            elif action == "plan_then_reschedule":
+                mode = parse_mode(step.get("scheduling_mode") or "balanced")
+                job_id = step.get("job_id")
+                reason = step.get("reason") or "QA scenario disruption"
+                sup = SupervisorAgent()
+                plan = await sup.plan_week(ws, scheduling_mode=mode)
+                out.plan_results.append(plan)
+                out.scheduling_mode = mode.value
+                if job_id:
+                    agent = ReschedulerAgent()
+                    res = await agent.run_reschedule(plan, job_id, reason)
+                    plan = store.get_plan()
+                    evt["reschedule"] = {"succeeded": res.succeeded}
+                out.final_plan = plan
+
+            else:
+                evt["error"] = f"unknown_action:{action}"
+
+            out.events.append(evt)
+
+        if not out.final_plan and plan:
             out.final_plan = plan
 
-        else:
-            evt["error"] = f"unknown_action:{action}"
-
-        out.events.append(evt)
-
-    if not out.final_plan and plan:
-        out.final_plan = plan
+    finally:
+        # Always restore, even if an exception fires mid-execution.
+        _llm.chat = _original_chat
+        _geocoder.geocode = _original_geocode
 
     # Clean up test jobs from store and Supabase after the case completes.
     if inserted_job_ids:
