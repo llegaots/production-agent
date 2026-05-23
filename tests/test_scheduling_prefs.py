@@ -1,10 +1,33 @@
-from app.scheduling_prefs import SchedulingMode, geo_cluster_target_cap, parse_mode, placement_score_bonus
+from datetime import date, timedelta
+
+from app.scheduling_prefs import (
+    SchedulingMode,
+    geo_cluster_target_cap,
+    parse_mode,
+    placement_score_bonus,
+    week_fill_bonus,
+)
 
 
 def test_parse_mode_aliases():
     assert parse_mode("crew fill") == SchedulingMode.CREW_FILL
     assert parse_mode("location first") == SchedulingMode.GEO_FIRST
     assert parse_mode("balanced") == SchedulingMode.BALANCED
+
+
+def test_week_fill_bonus_prefers_monday_over_friday():
+    ws = date(2026, 7, 6)  # Monday
+    mon = week_fill_bonus(ws, ws)
+    wed = week_fill_bonus(ws, ws + timedelta(days=2))
+    fri = week_fill_bonus(ws, ws + timedelta(days=4))
+    assert mon > wed > fri
+    assert fri == 0.0
+
+
+def test_week_fill_bonus_zero_outside_planning_window():
+    ws = date(2026, 7, 6)
+    assert week_fill_bonus(ws, ws + timedelta(days=5)) == 0.0
+    assert week_fill_bonus(ws, ws - timedelta(days=1)) == 0.0
 
 
 def test_placement_bonus_crew_fill_prefers_headroom():

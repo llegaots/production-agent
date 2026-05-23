@@ -1,6 +1,7 @@
 """Scheduling preferences — how the production manager prioritizes the week."""
 from __future__ import annotations
 
+from datetime import date
 from enum import Enum
 
 
@@ -31,6 +32,11 @@ class SchedulingMode(str, Enum):
 
 
 DEFAULT_MODE = SchedulingMode.GEO_FIRST
+
+# Mon→Fri front-fill: Monday gets (n_days-1)*weight, Friday gets 0.
+# Strong enough to prefer earlier days when capacity exists, but not so
+# large that it overrides hard trade-offs (drive, equipment, date windows).
+WEEK_FILL_WEIGHT = 1.5
 
 
 def parse_mode(value: str | None) -> SchedulingMode:
@@ -104,6 +110,19 @@ def load_balance_bonus(mode: SchedulingMode, crew_used_min: int, eligible_day_lo
     avg = sum(eligible_day_loads) / len(eligible_day_loads)
     # Strong enough to overcome moderate drive-distance bias when one crew is stacked.
     return 0.045 * (avg - crew_used_min)
+
+
+def week_fill_bonus(week_start: date, day: date, *, n_days: int = 5) -> float:
+    """Prefer filling the planning week front-to-back (Mon → Fri).
+
+    Default scheduling practice: pack the start of the week first, then spill
+    to later days only when constraints require it (client date windows,
+    crew capacity, equipment, location, load balancing, etc.).
+    """
+    offset = (day - week_start).days
+    if offset < 0 or offset >= n_days:
+        return 0.0
+    return WEEK_FILL_WEIGHT * (n_days - 1 - offset)
 
 
 # ── Cluster target cap ────────────────────────────────────────────────────────

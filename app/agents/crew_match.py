@@ -17,7 +17,13 @@ from __future__ import annotations
 from datetime import date
 
 from ..models import Crew, EquipmentKind, Job
-from ..scheduling_prefs import SchedulingMode, cluster_sort_key, load_balance_bonus, placement_score_bonus
+from ..scheduling_prefs import (
+    SchedulingMode,
+    cluster_sort_key,
+    load_balance_bonus,
+    placement_score_bonus,
+    week_fill_bonus,
+)
 from ..storage import store
 from .base import Agent, AgentContext, haversine_km, week_days
 
@@ -192,18 +198,20 @@ class CrewMatchAgent(Agent):
                         add_job((target, day), jid)
                         improved = True
                         break
-                    # Cross-day: same crew or different crew with slack.
-                    alt_targets: list[tuple[int, str, date]] = []
+                    # Cross-day: same crew or different crew with slack (prefer earlier days).
+                    alt_targets: list[tuple[int, int, str, date]] = []
                     for cid in crew_ids:
                         for alt_day in days:
                             if alt_day == day and cid == overloaded:
                                 continue
                             if not can_host(job, cid, alt_day):
                                 continue
-                            alt_targets.append((work_minutes(cid, alt_day), cid, alt_day))
+                            alt_targets.append(
+                                (work_minutes(cid, alt_day), alt_day.toordinal(), cid, alt_day)
+                            )
                     if not alt_targets:
                         continue
-                    _, target_crew, target_day = min(alt_targets)
+                    _, _, target_crew, target_day = min(alt_targets)
                     remove_job(src_key, jid)
                     add_job((target_crew, target_day), jid)
                     improved = True
@@ -302,6 +310,7 @@ class CrewMatchAgent(Agent):
                         fit
                         + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
                         + load_balance_bonus(mode, used_min, day_loads)
+                        + week_fill_bonus(ctx.week_start, day)
                     )
                     candidates.append((score, crew, day))
 
