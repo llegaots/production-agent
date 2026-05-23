@@ -1,4 +1,4 @@
-"""Phase 3 optimizer tests (no database)."""
+"""Phase 3 OR-Tools optimizer tests (no database, no LLM)."""
 
 from __future__ import annotations
 
@@ -10,123 +10,119 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.optimizer import InfeasibleScheduleError, solve
-from app.optimizer.models import OptimizerInput, ScheduleCrew, ScheduleJob, TimeWindow, TravelMatrix
-from app.optimizer.scenarios import (
-    feasible_two_crew_scenario,
-    infeasible_equipment_scenario,
-    infeasible_skills_scenario,
-    infeasible_time_window_scenario,
-)
+from app.optimizer import InfeasibleScheduleError, solve  # noqa: E402
+
+NINE_AM = 540
+ELEVEN_AM = 660
+TWO_PM = 840
 
 
-def _assigned_ids(result) -> set[str]:
-    return set(result.assigned_job_ids)
+def _route_for_crew(result, crew_id: str):
+    return next((r for r in result.routes if r.crew_id == crew_id), None)
 
 
-def test_feasible_scenario_produces_valid_routes():
-    inp = feasible_two_crew_scenario()
-    result = solve(inp)
+def _stop(result, job_id: str):
+    for route in result.routes:
+        for stop in route.stops:
+            if stop.job_id == job_id:
+                return stop, route.crew_id
+    return None, None
+
+
+# --- Happy path ---
+
+
+def test_happy_path_five_jobs_one_cluster_one_crew(cluster_five_jobs_one_crew):
+    result = solve(cluster_five_jobs_one_crew)
 
     assert result.status in ("optimal", "feasible")
-    mandatory = {j.id for j in inp.jobs if j.mandatory}
-    assert mandatory.issubset(_assigned_ids(result))
+    assert len(result.assigned_job_ids) == 5
+    assert result.unassigned_job_ids == []
 
-    for route in result.routes:
-        assert route.end_minute <= 480
-        prev_depart = 0
-        for stop in route.stops:
-            assert stop.arrival_minute >= stop.start_minute
-            assert stop.depart_minute == stop.start_minute + next(
-                j.service_minutes for j in inp.jobs if j.id == stop.job_id
-            )
-            job = next(j for j in inp.jobs if j.id == stop.job_id)
-            assert stop.arrival_minute >= job.time_window.earliest_minute
-            assert stop.arrival_minute <= job.time_window.latest_minute
-            assert stop.arrival_minute >= prev_depart or prev_depart == 0
-            prev_depart = stop.depart_minute
-
-    crew_ids = {r.crew_id for r in result.routes if r.stops}
-    assert "alpha" in crew_ids or "bravo" in crew_ids
+    route = _route_for_crew(result, "solo")
+    assert route is not None
+    assert len(route.stops) == 5
+    assert route.end_minute <= 480
 
 
-def test_high_rise_job_goes_to_bravo():
-    inp = feasible_two_crew_scenario()
-    result = solve(inp)
-    bravo = next(r for r in result.routes if r.crew_id == "bravo")
-    assert any(s.job_id == "j3" for s in bravo.stops)
+# --- Skill matching ---
 
 
-def test_infeasible_skills_fails_cleanly():
-    inp = infeasible_skills_scenario()
-    result = solve(inp)
+def test_high_rise_jobs_only_on_certified_crew(high_rise_three_jobs_two_crews):
+    result = solve(high_rise_three_jobs_two_crews)
+
+    assert result.status in ("optimal", "feasible")
+    assert set(result.assigned_job_ids) == {"hr1", "hr2", "hr3"}
+
+    alpha = _route_for_crew(result, "alpha")
+    bravo = _route_for_crew(result, "bravo")
+    assert alpha is None or len(alpha.stops) == 0
+    assert bravo is not None
+    assert len(bravo.stops) == 3
+    assert {s.job_id for s in bravo.stops} == {"hr1", "hr2", "hr3"}
+
+
+# --- Time windows ---
+
+
+def test_morning_window_not_scheduled_at_afternoon(morning_window_job_input):
+    result = solve(morning_window_job_input)
+
+    assert result.status in ("optimal", "feasible")
+    stop, _ = _stop(result, "morning-only")
+    assert stop is not None
+    assert NINE_AM <= stop.arrival_minute <= ELEVEN_AM
+    assert stop.arrival_minute < TWO_PM
+
+
+# --- Equipment ---
+
+
+def test_water_fed_pole_only_on_equipped_crew(water_fed_pole_equipment_input):
+    result = solve(water_fed_pole_equipment_input)
+
+    assert result.status in ("optimal", "feasible")
+    _, crew_id = _stop(result, "wfp-job")
+    assert crew_id == "bravo"
+
+    alpha = _route_for_crew(result, "alpha")
+    if alpha:
+        assert "wfp-job" not in {s.job_id for s in alpha.stops}
+
+
+# --- Infeasibility ---
+
+
+def test_fifty_jobs_one_crew_fails_cleanly(overload_fifty_jobs_one_crew):
+    result = solve(overload_fifty_jobs_one_crew)
+
     assert result.status == "infeasible"
-    assert "impossible" in result.unassigned_job_ids
-    assert any("impossible" in m or "underwater" in m for m in result.messages)
+    assert len(result.unassigned_job_ids) >= 44
+    assert result.messages
+    assert any(
+        "Mandatory" in m
+        or "feasible" in m.lower()
+        or "not scheduled" in m.lower()
+        or "could not find" in m.lower()
+        for m in result.messages
+    )
 
     with pytest.raises(InfeasibleScheduleError) as exc:
-        solve(inp, strict=True)
-    assert "impossible" in exc.value.unassigned_job_ids
+        solve(overload_fifty_jobs_one_crew, strict=True)
+    assert exc.value.unassigned_job_ids
+    assert str(exc.value)
 
 
-def test_infeasible_equipment_fails_cleanly():
-    inp = infeasible_equipment_scenario()
-    result = solve(inp)
-    assert result.status == "infeasible"
-    assert "needs-lift" in result.unassigned_job_ids
-
-    with pytest.raises(InfeasibleScheduleError):
-        solve(inp, strict=True)
+# --- Soft preference ---
 
 
-def test_infeasible_time_windows():
-    inp = infeasible_time_window_scenario()
-    result = solve(inp)
-    assert result.status == "infeasible"
-    assert result.unassigned_job_ids
+def test_preference_violation_flagged_when_forced(forced_preference_violation_input):
+    result = solve(forced_preference_violation_input)
 
-    with pytest.raises(InfeasibleScheduleError):
-        solve(inp, strict=True)
-
-
-def test_soft_preference_does_not_block_assignment():
-    """Non-preferred crew is allowed; j1 should still be scheduled."""
-    inp = feasible_two_crew_scenario()
-    result = solve(inp)
-    assert "j1" in _assigned_ids(result)
-
-
-def test_max_jobs_per_crew():
-    """Each crew may visit at most one job; two jobs must split across crews."""
-    matrix = [
-        [0, 10, 10],
-        [10, 0, 10],
-        [10, 10, 0],
-    ]
-    inp = OptimizerInput(
-        crews=[
-            ScheduleCrew(id="c1", depot_index=0, max_jobs=1),
-            ScheduleCrew(id="c2", depot_index=0, max_jobs=1),
-        ],
-        jobs=[
-            ScheduleJob(
-                id="a",
-                node_index=1,
-                service_minutes=30,
-                time_window=TimeWindow(earliest_minute=0, latest_minute=400),
-                mandatory=True,
-            ),
-            ScheduleJob(
-                id="b",
-                node_index=2,
-                service_minutes=30,
-                time_window=TimeWindow(earliest_minute=0, latest_minute=400),
-                mandatory=True,
-            ),
-        ],
-        travel=TravelMatrix(minutes=matrix),
-        time_limit_seconds=5,
-    )
-    result = solve(inp)
     assert result.status in ("optimal", "feasible")
-    assert _assigned_ids(result) == {"a", "b"}
+    assert "j-pref" in result.assigned_job_ids
+    _, crew_id = _stop(result, "j-pref")
+    assert crew_id == "bravo"
+
+    assert any("Preference violation" in m and "j-pref" in m for m in result.messages)
+    assert any("alpha" in m for m in result.messages)

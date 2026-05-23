@@ -172,10 +172,15 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
     params.first_solution_strategy = (
         routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     )
-    params.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    )
-    params.time_limit.seconds = input_data.time_limit_seconds
+    if input_data.time_limit_seconds <= 1:
+        params.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC
+        )
+    else:
+        params.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+    params.time_limit.seconds = max(1, input_data.time_limit_seconds)
 
     solution = routing.SolveWithParameters(params)
     if solution is None:
@@ -198,6 +203,7 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
 
     routes: list[CrewRoute] = []
     assigned: set[str] = set()
+    preference_violations: list[str] = []
     total_objective = solution.ObjectiveValue()
 
     for vehicle_id, crew in enumerate(crews):
@@ -215,6 +221,11 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
                 arrival = solution.Value(time_dimension.CumulVar(next_index))
                 start = arrival
                 depart = arrival + job.service_minutes
+                if job.preferred_crew_id and job.preferred_crew_id != crew.id:
+                    preference_violations.append(
+                        f"Preference violation: job {job.id} prefers crew "
+                        f"{job.preferred_crew_id} but assigned to {crew.id}"
+                    )
                 stops.append(
                     RouteStop(
                         job_id=job.id,
@@ -249,12 +260,13 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
             f"Mandatory jobs not scheduled: {', '.join(mandatory_left)}"
         ]
 
+    all_messages = pre_messages + preference_violations
     result = OptimizerResult(
         status=status,
         routes=routes,
         unassigned_job_ids=unassigned,
         objective_cost=int(total_objective),
-        messages=pre_messages,
+        messages=all_messages,
     )
     if strict and status == "infeasible":
         raise InfeasibleScheduleError(result.messages, unassigned)
