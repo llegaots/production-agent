@@ -72,12 +72,30 @@ class ReschedulerAgent(Agent):
             await emit("error", f"Unknown job {job_id}.")
             return RescheduleResult(job_id=job_id, succeeded=False, events=events)
 
-        await emit("start", f"Replanning job {job_id}: {reason}.")
+        await emit(
+            "start",
+            f"Replanning job {job_id}: {reason}.",
+            detail={"job_id": job_id, "reason": reason, "preferred_day": preferred_day.isoformat() if preferred_day else None},
+        )
 
         window_start = new_earliest or job.earliest_date
         window_end = new_latest or job.latest_date
         if window_start > window_end:
             window_start, window_end = window_end, window_start
+
+        # Expand the window to include a preferred_day that falls outside the
+        # job's normal date range (e.g. when owner says "move to next Monday").
+        if preferred_day:
+            if preferred_day < window_start:
+                window_start = preferred_day
+            if preferred_day > window_end:
+                window_end = preferred_day
+            await emit(
+                "window",
+                f"Search window: {window_start.isoformat()} → {window_end.isoformat()} "
+                f"(expanded to include preferred day {preferred_day.isoformat()}).",
+                detail={"window_start": window_start.isoformat(), "window_end": window_end.isoformat()},
+            )
 
         # 1) remove the job from its current crew/day
         original_day: Optional[date] = None
@@ -227,6 +245,24 @@ class ReschedulerAgent(Agent):
         plan.events.extend(events)
         store.set_job_status(job.id, JobStatus.RESCHEDULED)
         store.set_plan(plan)
+
+        # Emit a structured audit trail entry so the plan summary and QA
+        # critic can see the full decision rationale for this reschedule.
+        await emit(
+            "audit",
+            f"Reschedule audit: {job_id} moved from {original_day} ({original_crew}) "
+            f"→ {new_day.isoformat()} ({new_crew_id}). Reason: {reason}.",
+            detail={
+                "job_id": job_id,
+                "original_day": original_day.isoformat() if original_day else None,
+                "original_crew": original_crew,
+                "new_day": new_day.isoformat(),
+                "new_crew_id": new_crew_id,
+                "reason": reason,
+                "candidates_evaluated": len(candidates),
+                "score": chosen["score"],
+            },
+        )
 
         return RescheduleResult(
             job_id=job_id,

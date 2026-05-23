@@ -12,9 +12,21 @@ from .models import (
     Job,
     JobStatus,
     PlanResult,
-    WeekPlan,
 )
 from .scheduling_prefs import DEFAULT_MODE, SchedulingMode
+
+
+class CrewUnavailability:
+    """Records a date-range during which a crew (or its equipment) is unavailable."""
+
+    def __init__(self, crew_id: str, start: date, end: date, reason: str = "") -> None:
+        self.crew_id = crew_id
+        self.start = start
+        self.end = end
+        self.reason = reason or "unavailable"
+
+    def covers(self, day: date) -> bool:
+        return self.start <= day <= self.end
 
 
 class Store:
@@ -28,6 +40,42 @@ class Store:
         self.confirmed_plan: Optional[PlanResult] = None
         self.scheduling_mode: SchedulingMode = DEFAULT_MODE
         self.last_plan_id: Optional[str] = None
+        # Crew unavailability periods (e.g. equipment failure, callout)
+        self._unavailability: list[CrewUnavailability] = []
+
+    # ---- crew unavailability ----
+    def mark_crew_unavailable(
+        self,
+        crew_id: str,
+        start: date,
+        end: date,
+        reason: str = "unavailable",
+    ) -> None:
+        """Mark a crew as unavailable for a date range (e.g. equipment failure)."""
+        with self._lock:
+            self._unavailability.append(CrewUnavailability(crew_id, start, end, reason))
+
+    def clear_crew_unavailability(self, crew_id: Optional[str] = None) -> None:
+        """Clear all unavailability records, or just those for a specific crew."""
+        with self._lock:
+            if crew_id is None:
+                self._unavailability.clear()
+            else:
+                self._unavailability = [u for u in self._unavailability if u.crew_id != crew_id]
+
+    def is_crew_available(self, crew_id: str, day: date) -> bool:
+        """Return True if the crew has no unavailability record covering this day."""
+        for u in self._unavailability:
+            if u.crew_id == crew_id and u.covers(day):
+                return False
+        return True
+
+    def get_unavailability_reason(self, crew_id: str, day: date) -> Optional[str]:
+        """Return the reason for crew unavailability on a given day, or None."""
+        for u in self._unavailability:
+            if u.crew_id == crew_id and u.covers(day):
+                return u.reason
+        return None
 
     # ---- jobs ----
     def upsert_job(self, job: Job) -> Job:

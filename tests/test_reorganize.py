@@ -47,3 +47,49 @@ def test_parse_reorganize_normal_instruction_not_emergency():
     intent = parse_reorganize_instruction("Please balance the workload this week", ws)
     assert intent.scheduling_mode == SchedulingMode.BALANCED
     assert intent.target_day is None
+
+
+def test_parse_reorganize_next_monday():
+    """'next Monday' should target the following week's Monday."""
+    ws = date(2025, 5, 19)  # current week Monday
+    intent = parse_reorganize_instruction("move job_H04 to next Monday", ws)
+    assert intent.job_id == "job_h04"
+    assert intent.target_is_next_week is True
+    assert intent.target_day == date(2025, 5, 26)  # next Monday
+
+
+def test_parse_reorganize_next_week_thursday():
+    """'next week Thursday' should target the following week's Thursday."""
+    ws = date(2025, 5, 19)
+    intent = parse_reorganize_instruction(
+        "reschedule job_H05 to next week Thursday", ws
+    )
+    assert intent.job_id == "job_h05"
+    assert intent.target_is_next_week is True
+    assert intent.target_day == date(2025, 5, 29)  # following Thursday
+
+
+def test_parse_reorganize_next_week_no_day():
+    """'next week' without a specific day targets the following Monday."""
+    ws = date(2025, 5, 19)
+    intent = parse_reorganize_instruction("push this job to next week", ws)
+    assert intent.target_is_next_week is True
+    assert intent.target_day == date(2025, 5, 26)  # next Monday
+
+
+def test_parse_reorganize_7am_early_start():
+    """'compress Thursday 7am' should extract start_time and target Thursday."""
+    ws = date(2025, 5, 19)
+    intent = parse_reorganize_instruction(
+        "compress job_H01 into Thursday 7am start", ws
+    )
+    assert intent.target_day == date(2025, 5, 22)  # Thursday
+    assert intent.start_time == "07:00"
+
+
+def test_parse_reorganize_early_start_keyword():
+    """'early start' should set start_time to 07:00."""
+    ws = date(2025, 5, 19)
+    intent = parse_reorganize_instruction("early start Monday for job_G01", ws)
+    assert intent.start_time == "07:00"
+    assert intent.target_day == date(2025, 5, 19)  # Monday

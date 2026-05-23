@@ -1,7 +1,7 @@
 """Execute AI-designed QA scenarios against the real agent stack."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from ..agents import ReschedulerAgent, SupervisorAgent
@@ -80,22 +80,37 @@ async def execute_case(
                 "mode": intent.scheduling_mode.value,
                 "job_id": intent.job_id,
                 "target_day": intent.target_day.isoformat() if intent.target_day else None,
+                "start_time": intent.start_time,
+                "target_is_next_week": intent.target_is_next_week,
             }
             if intent.job_id and plan:
                 agent = ReschedulerAgent()
                 plan = store.get_plan() or plan
-                res = await agent.run_reschedule(
-                    plan,
-                    intent.job_id,
-                    intent.reason,
-                    preferred_day=intent.target_day,
-                )
+                # When the owner explicitly targets next week, extend the job's
+                # date window so the rescheduler can find a slot there.
+                if intent.target_is_next_week and intent.target_day:
+                    next_week_end = intent.target_day + timedelta(days=4)
+                    res = await agent.run_reschedule(
+                        plan,
+                        intent.job_id,
+                        intent.reason,
+                        preferred_day=intent.target_day,
+                        new_latest=next_week_end,
+                    )
+                else:
+                    res = await agent.run_reschedule(
+                        plan,
+                        intent.job_id,
+                        intent.reason,
+                        preferred_day=intent.target_day,
+                    )
                 plan = store.get_plan()
                 out.final_plan = plan
                 evt["reschedule"] = {
                     "succeeded": res.succeeded,
                     "new_day": res.new_day.isoformat() if res.new_day else None,
                     "new_crew_id": res.new_crew_id,
+                    "next_week": intent.target_is_next_week,
                 }
             else:
                 sup = SupervisorAgent()

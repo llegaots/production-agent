@@ -105,7 +105,7 @@ class CrewMatchAgent(Agent):
             key=lambda i: -cluster_sort_key(mode, clusters[i]["job_ids"], jobs_by_id),
         )
 
-        def place(jobs: list[Job], emit_phase: str) -> bool:
+        async def place(jobs: list[Job], emit_phase: str) -> bool:
             """Place a contiguous batch of jobs on the best (crew, day) slot.
 
             Returns True if placed (all jobs together), False otherwise.
@@ -143,6 +143,16 @@ class CrewMatchAgent(Agent):
                     # every job's [earliest_date, latest_date] range.
                     if any(day < j.earliest_date or day > j.latest_date for j in jobs):
                         continue
+                    # Skip days when the crew is marked unavailable (equipment failure, callout)
+                    if not store.is_crew_available(crew.id, day):
+                        unavail_reason = store.get_unavailability_reason(crew.id, day) or "unavailable"
+                        await ctx.emit(
+                            self.name,
+                            "skip",
+                            f"Crew {crew.name} unavailable on {day.isoformat()}: {unavail_reason}.",
+                            detail={"crew_id": crew.id, "day": day.isoformat(), "reason": unavail_reason},
+                        )
+                        continue
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue
@@ -168,7 +178,7 @@ class CrewMatchAgent(Agent):
             cluster_jobs = [jobs_by_id[j] for j in cluster["job_ids"]]
             total_minutes = sum(j.estimated_minutes for j in cluster_jobs)
 
-            if place(cluster_jobs, "assign"):
+            if await place(cluster_jobs, "assign"):
                 last = draft_plan[-1]
                 crew_name = next(c.name for c in ctx.crews if c.id == last["crew_id"])
                 await ctx.emit(
@@ -191,7 +201,7 @@ class CrewMatchAgent(Agent):
                 f"Splitting cluster of {len(cluster_jobs)} jobs ({total_minutes} min) — no single crew/day fits.",
             )
             for j in sorted(cluster_jobs, key=lambda x: -x.estimated_minutes):
-                if place([j], "single"):
+                if await place([j], "single"):
                     last = draft_plan[-1]
                     crew_name = next(c.name for c in ctx.crews if c.id == last["crew_id"])
                     await ctx.emit(

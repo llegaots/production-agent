@@ -399,3 +399,37 @@ def test_rope_access_jobs_only_assigned_to_rope_crew():
                     f"Rope-access job {stop.job_id} was assigned to crew {crew.name} "
                     f"which does not have ROPE_ACCESS skill"
                 )
+
+
+def test_crew_unavailability_blocks_assignment():
+    """When a crew is marked unavailable for a date range, no jobs should be
+    assigned to that crew on those days."""
+    from app.storage import store as _store
+
+    sup = SupervisorAgent()
+    # Block crew_charlie for the whole planning week
+    _store.mark_crew_unavailable(
+        "crew_charlie",
+        SEED_WEEK_START,
+        SEED_WEEK_START + timedelta(days=4),
+        reason="equipment_failure: rope kit damaged",
+    )
+    try:
+        result = asyncio.run(sup.plan_week())
+        # crew_charlie should have NO assignments
+        charlie_days = [cd for cd in result.plan.days if cd.crew_id == "crew_charlie"]
+        assert not charlie_days, (
+            "crew_charlie was scheduled despite being marked unavailable for the whole week"
+        )
+        # All rope-access jobs should be unscheduled (since only charlie can do them)
+        from app.models import Skill
+        rope_job_ids = {
+            j.id for j in store.list_jobs() if Skill.ROPE_ACCESS in j.required_skills
+        }
+        scheduled_ids = {s.job_id for d in result.plan.days for s in d.stops}
+        for rope_id in rope_job_ids:
+            assert rope_id not in scheduled_ids, (
+                f"Rope job {rope_id} was scheduled even though the rope crew is unavailable"
+            )
+    finally:
+        _store.clear_crew_unavailability("crew_charlie")

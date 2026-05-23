@@ -1,9 +1,10 @@
 """Realistic West Island (Montreal) seed dataset for ProductionAgent.
 
-28 jobs across 5 service types, 6 neighbourhoods, 4 crews.
+29 jobs across 5 service types, 6 neighbourhoods, 4 crews.
 Designed to stress-test the scheduler:
   - skill mismatches (rope-access jobs only Charlie can take)
-  - equipment conflicts (only one scissor-lift, shared by Bravo)
+  - equipment conflicts (only one scissor-lift, shared by Bravo; only one rope
+    crew for multiple high-rise jobs — job_H04/H05 are the conflict scenario)
   - capacity pressure (full-day jobs that fill a crew by themselves)
   - geo spread (Île-Perrot ↔ Kirkland ↔ Dorval is 30+ km round-trip)
   - tight date windows (some jobs are weekend-only available, forcing
@@ -539,6 +540,35 @@ def seed(reset: bool = True) -> None:
             notes="10-storey office tower — full facade. Rope + lift both required. "
                   "Requires Bravo AND Charlie together (Charlie has rope, Bravo has lift). "
                   "Full day. NOTE: no single crew covers all equipment.",
+        ),
+        # ── Rope-conflict scenario jobs ─────────────────────────────────────
+        # Two rope jobs in adjacent zones, ONE rope crew (Charlie) — the
+        # scheduler must detect this contention and split them across days.
+        Job(
+            id="job_H04", client_id="cli_004",
+            service_type=ServiceType.HIGH_RISE,
+            address="32 Rue Oxford, Baie-D'Urfé QC H9X 2T5",
+            lat=_BAIE_D_URFE[0] + 0.003, lng=_BAIE_D_URFE[1] - 0.001,
+            estimated_minutes=240, difficulty=5,
+            required_skills=[Skill.ROPE_ACCESS],
+            required_equipment=[EquipmentKind.ROPE_KIT, EquipmentKind.VAN],
+            earliest_date=full_wk[0], latest_date=full_wk[1],
+            price=1350.0,
+            notes="6-storey condo, Baie-D'Urfé. Rope access, Charlie only. "
+                  "Equipment conflict scenario: cannot run same day as job_H05 (one rope crew).",
+        ),
+        Job(
+            id="job_H05", client_id="cli_003",
+            service_type=ServiceType.HIGH_RISE,
+            address="1355 Boul. Des Sources, Dorval QC H9S 5K4",
+            lat=_DORVAL[0] + 0.005, lng=_DORVAL[1] - 0.003,
+            estimated_minutes=180, difficulty=4,
+            required_skills=[Skill.ROPE_ACCESS],
+            required_equipment=[EquipmentKind.ROPE_KIT, EquipmentKind.VAN],
+            earliest_date=full_wk[0], latest_date=full_wk[1],
+            price=980.0,
+            notes="4-storey office, Dorval. Rope access, Charlie only. "
+                  "Equipment conflict scenario: cannot run same day as job_H04 (one rope crew).",
         ),
 
         # ═══════════════════════════════════════════════════════════════════

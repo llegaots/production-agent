@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..audit_log import AuditLogger
-from ..llm import llm
 from ..agents.supervisor import _next_monday
 from ..seed import SEED_WEEK_START
 from ..audit_log import REPORTS_DIR
@@ -43,12 +42,6 @@ class AIQATeamRunner:
         *,
         auto_cursor_handoff: Optional[bool] = None,
     ) -> QAReport:
-        if not llm.enabled:
-            raise RuntimeError(
-                "AI QA requires an LLM (set ANTHROPIC_API_KEY or OPENAI_API_KEY). "
-                "Use POST /api/qa/run with mode=legacy for rule-based tests."
-            )
-
         started = datetime.now(timezone.utc).isoformat()
         self.audit.log(
             "AIQATeam",

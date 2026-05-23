@@ -123,7 +123,7 @@ def plan_result():
 # ─── Dataset integrity ────────────────────────────────────────────────────────
 
 def test_seed_has_expected_counts():
-    assert len(store.list_jobs()) == 27, "expected 27 jobs in realistic seed"
+    assert len(store.list_jobs()) == 29, "expected 29 jobs in realistic seed"
     assert len(store.list_crews()) == 4
     assert len(store.list_equipment()) >= 18
 
@@ -425,3 +425,32 @@ def test_all_scheduled_jobs_have_required_equipment_on_crew(plan_result):
                 f"Crew {cd.crew_id} scheduled job {job.id} but is missing equipment: "
                 f"{[e.value for e in missing]}"
             )
+
+
+def test_rope_conflict_jobs_split_across_days(plan_result):
+    """job_H04 and job_H05 both require rope_access (Charlie only, one crew).
+    They MUST land on different days — the scheduler cannot assign Charlie to
+    two separate job sites on the same day."""
+    day_for: dict[str, tuple[str, object]] = {}
+    for cd in plan_result.plan.days:
+        for stop in cd.stops:
+            if stop.job_id in ("job_H04", "job_H05"):
+                day_for[stop.job_id] = (cd.crew_id, cd.day)
+
+    if len(day_for) == 2:
+        assert day_for["job_H04"][1] != day_for["job_H05"][1], (
+            f"job_H04 and job_H05 both landed on {day_for['job_H04'][1]} "
+            "but Charlie can only be at one site per day. "
+            "Scheduler must split them across different days."
+        )
+
+
+def test_rope_conflict_jobs_have_charlie_crew(plan_result):
+    """job_H04 and job_H05 require ROPE_ACCESS — they must only appear on Charlie."""
+    for cd in plan_result.plan.days:
+        for stop in cd.stops:
+            if stop.job_id in ("job_H04", "job_H05"):
+                assert cd.crew_id == "crew_charlie", (
+                    f"Rope job {stop.job_id} was assigned to {cd.crew_id}; "
+                    "only crew_charlie has ROPE_ACCESS."
+                )
