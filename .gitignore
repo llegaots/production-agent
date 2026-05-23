@@ -18,6 +18,7 @@ frontend/.env.local
 
 # Eval reports (generated artifacts; raw rows live in eval_runs)
 evals/reports/*.md
+evals/reports/*.html
 !evals/reports/.gitkeep
 
 # Test / coverage
