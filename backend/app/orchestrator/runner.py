@@ -31,19 +31,24 @@ def _next_week_bounds(today: date | None = None) -> tuple[date, date]:
     return week_start, week_end
 
 
-def _load_pending_job_ids(week_start: date, week_end: date, limit: int = 50) -> list[str]:
-    rows = (
+def _load_pending_job_ids(
+    week_start: date,
+    week_end: date,
+    limit: int = 50,
+    *,
+    job_id_prefix: str | None = None,
+) -> list[str]:
+    q = (
         tools_db()
         .table("jobs")
         .select("id")
         .eq("status", "pending")
         .lte("earliest_date", week_end.isoformat())
         .gte("latest_date", week_start.isoformat())
-        .limit(limit)
-        .execute()
-        .data
-        or []
     )
+    if job_id_prefix:
+        q = q.like("id", f"{job_id_prefix}%")
+    rows = q.limit(limit).execute().data or []
     return [r["id"] for r in rows]
 
 
@@ -239,7 +244,13 @@ def run_scheduling_mission(inp: ScheduleWeekInput) -> ScheduleRunResult:
     if not week_start or not week_end:
         week_start, week_end = _next_week_bounds()
 
-    job_ids = _load_pending_job_ids(week_start, week_end)
+    load_limit = inp.job_load_limit or 200
+    job_ids = _load_pending_job_ids(
+        week_start,
+        week_end,
+        limit=load_limit,
+        job_id_prefix=inp.job_id_prefix,
+    )
     if not job_ids:
         raise ValueError(f"No pending jobs found for week {week_start} – {week_end}")
 

@@ -23,6 +23,14 @@ class ScheduleWeekInput(BaseModel):
         default=True,
         description="If false, run deterministic tool sequence (no Anthropic API calls)",
     )
+    job_id_prefix: str | None = Field(
+        default=None,
+        description="When set, only pending jobs with ids starting with this prefix are scheduled (E2E isolation)",
+    )
+    job_load_limit: int | None = Field(
+        default=None,
+        description="Cap jobs loaded from Supabase for this mission",
+    )
 
 
 class ScheduleIterationSummary(BaseModel):

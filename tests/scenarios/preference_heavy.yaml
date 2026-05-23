@@ -1,0 +1,63 @@
+name: preference_heavy
+description: Many preferred crews and morning windows — expect critic iteration (LLM agent).
+week_anchor: "2026-06-02"
+user_request: "Honor customer crew and morning time preferences across the week."
+expect:
+  status: approved
+  max_iterations: 4
+  max_high_severity_issues: 0
+  min_iterations: 1
+  require_all_jobs_accounted: true
+requires_agent: true
+use_llm_critic: false
+use_agent: true
+max_iterations: 4
+
+crews:
+  - id: crew-a
+    name: Alpha
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5017
+    base_lng: -73.5673
+  - id: crew-b
+    name: Bravo
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5025
+    base_lng: -73.5665
+  - id: crew-c
+    name: Charlie
+    skills: [residential, commercial]
+    equipment_kinds: [ladder_28, van]
+    base_lat: 45.5008
+    base_lng: -73.5680
+
+equipment:
+  - {id: eq-van-a, kind: van, label: Van A, quantity: 1}
+  - {id: eq-van-b, kind: van, label: Van B, quantity: 1}
+  - {id: eq-van-c, kind: van, label: Van C, quantity: 1}
+  - {id: eq-lad-1, kind: ladder_28, label: Ladder, quantity: 6}
+
+crew_equipment:
+  - {crew_id: crew-a, equipment_id: eq-van-a}
+  - {crew_id: crew-a, equipment_id: eq-lad-1}
+  - {crew_id: crew-b, equipment_id: eq-van-b}
+  - {crew_id: crew-b, equipment_id: eq-lad-1}
+  - {crew_id: crew-c, equipment_id: eq-van-c}
+  - {crew_id: crew-c, equipment_id: eq-lad-1}
+
+clients:
+  - {id: client-p1, name: Pref Client, contact_email: p1@test.com, contact_phone: "514-555-0200"}
+
+jobs:
+  - template: preference_job
+    count: 12
+    service_type: window_cleaning
+    estimated_minutes: 45
+    morning_start: 480
+    morning_end: 660
+    cluster_lat: 45.505
+    cluster_lng: -73.565
+    spread: 0.012
+    preferred_crews: [crew-a, crew-b, crew-c]

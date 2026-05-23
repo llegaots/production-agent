@@ -18,7 +18,25 @@ from app.tools._db import tools_db
 
 def _job_time_window(job: dict, target: date) -> TimeWindow:
     """Map job date range to minute window on target day (simplified)."""
+    notes = job.get("notes") or ""
+    if "tw_start:" in notes and "tw_end:" in notes:
+        try:
+            part = notes.split("tw_start:")[1]
+            start_s, rest = part.split("tw_end:", 1)
+            return TimeWindow(
+                earliest_minute=int(start_s.strip().split()[0]),
+                latest_minute=int(rest.strip().split()[0]),
+            )
+        except (ValueError, IndexError):
+            pass
     return TimeWindow(earliest_minute=60, latest_minute=420)
+
+
+def _preferred_crew_id(job: dict) -> str | None:
+    notes = job.get("notes") or ""
+    if "preferred_crew:" in notes:
+        return notes.split("preferred_crew:")[1].split()[0].strip()
+    return None
 
 
 def _load_crew_equipment(crew_ids: list[str]) -> dict[str, list[str]]:
@@ -51,7 +69,7 @@ def run_optimizer(inp: RunOptimizerInput) -> RunOptimizerOutput:
         db.table("jobs")
         .select(
             "id, lat, lng, estimated_minutes, required_skills, required_equipment, "
-            "earliest_date, latest_date, status"
+            "earliest_date, latest_date, status, notes"
         )
         .in_("id", inp.job_ids)
         .execute()
@@ -108,6 +126,7 @@ def run_optimizer(inp: RunOptimizerInput) -> RunOptimizerOutput:
                 time_window=_job_time_window(job, inp.target_date),
                 required_skills=list(job.get("required_skills") or []),
                 required_equipment=list(job.get("required_equipment") or []),
+                preferred_crew_id=_preferred_crew_id(job),
             )
         )
 
