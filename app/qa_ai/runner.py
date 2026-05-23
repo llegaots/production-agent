@@ -19,7 +19,7 @@ from .executor import apply_owner_retry, execute_case
 from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
-from .schedule_snapshot import filter_qa_schedule_context
+from .schedule_snapshot import filter_qa_schedule_context, format_schedule_markdown
 from .store_setup import normalize_case, prepare_qa_run, validate_case
 from .test_job_manager import delete_test_jobs
 
@@ -164,9 +164,11 @@ class AIQATeamRunner:
                 iter_record = {
                     "iteration": iteration,
                     "execution": exec_result.to_dict(),
+                    "schedule_reviewed": schedule_ctx,
                     "critique": critique,
                 }
                 case_record["iterations"].append(iter_record)
+                case_record["schedule_reviewed"] = schedule_ctx
 
                 verdict = (critique.get("verdict") or "fail").lower()
                 self.audit.log(
@@ -176,6 +178,7 @@ class AIQATeamRunner:
                     detail={
                         "viability_score": critique.get("viability_score"),
                         "placement_critiques": critique.get("placement_critiques", [])[:5],
+                        "schedule_reviewed": schedule_ctx,
                     },
                 )
 
@@ -464,6 +467,13 @@ class AIQATeamRunner:
                 crit = c.get("final_critique") or {}
                 if crit.get("executive_summary"):
                     lines.append(f"\n**Operator verdict:** {crit['executive_summary']}\n")
+                schedule_ctx = c.get("schedule_reviewed")
+                if not schedule_ctx and c.get("iterations"):
+                    schedule_ctx = (c["iterations"][-1] or {}).get("schedule_reviewed")
+                if schedule_ctx:
+                    lines.append("**Schedule under review:**\n")
+                    lines.append(format_schedule_markdown(schedule_ctx))
+                    lines.append("")
                 for pc in crit.get("placement_critiques") or []:
                     sev = pc.get("severity", "?").upper()
                     lines.append(

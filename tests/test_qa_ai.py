@@ -3,7 +3,39 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from app.qa_ai.runner import AIQATeamRunner
+from app.qa_ai.schedule_snapshot import format_schedule_markdown
 from app.seed import seed
+
+
+def test_format_schedule_markdown():
+    ctx = {
+        "week_start": "2026-07-06",
+        "crew_days": [
+            {
+                "crew_id": "crew_alpha",
+                "crew_name": "Alpha",
+                "day": "2026-07-07",
+                "weekday": "Tuesday",
+                "utilization": 0.75,
+                "total_drive_minutes": 20,
+                "stops": [
+                    {
+                        "order": 1,
+                        "job_id": "qa_job_001",
+                        "address": "100 Lakeshore, Pointe-Claire QC",
+                        "start_time": "08:00",
+                        "travel_minutes_before": 0,
+                    }
+                ],
+            }
+        ],
+        "unscheduled_jobs": [],
+        "metrics": {"scheduled_stops": 1, "unscheduled_count": 0, "overbooked_days": 0},
+    }
+    md = format_schedule_markdown(ctx)
+    assert "qa_job_001" in md
+    assert "Alpha" in md
+    assert "Tuesday" in md
 
 
 def test_ai_qa_reflective_loop(monkeypatch):
@@ -147,3 +179,4 @@ def test_ai_qa_reflective_loop(monkeypatch):
     first = report.scenarios[0]
     assert first.get("iterations")
     assert first["iterations"][0]["critique"]["placement_critiques"]
+    assert first["iterations"][0].get("schedule_reviewed") is not None

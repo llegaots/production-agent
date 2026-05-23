@@ -454,6 +454,10 @@
                   </div>
                   <p class="text-xs text-neutral-500 mt-1" x-text="c.persona_story || ''"></p>
                   <p class="text-xs text-neutral-400 mt-1" x-text="(c.final_critique || {}).executive_summary || ''"></p>
+                  <div class="mt-2" x-show="qaCaseScheduleReviewed(c)">
+                    <p class="text-[10px] font-medium text-neutral-400 mb-1">Schedule critiqued</p>
+                    <div x-html="buildQaScheduleTable(qaCaseScheduleReviewed(c))"></div>
+                  </div>
                   <template x-for="pc in ((c.final_critique || {}).placement_critiques || []).slice(0, 4)" :key="pc.job_id + (pc.scheduled_day || '')">
                     <p class="text-[10px] text-amber-400/90 mt-1 ml-4" x-text="'• ' + (pc.question || '')"></p>
                   </template>
@@ -1520,6 +1524,91 @@
           }
           while (cells.length % 7 !== 0) cells.push({ pad: `t${cells.length}` });
           return cells;
+        },
+
+        qaCaseScheduleReviewed(c) {
+          if (c?.schedule_reviewed?.crew_days?.length || c?.schedule_reviewed?.unscheduled_jobs?.length) {
+            return c.schedule_reviewed;
+          }
+          const iters = c?.iterations || [];
+          if (!iters.length) return c?.schedule_reviewed || null;
+          const last = iters[iters.length - 1];
+          return last?.schedule_reviewed || last?.execution?.final_plan || null;
+        },
+
+        buildQaScheduleTable(ctx) {
+          if (!ctx) return '<p class="text-neutral-500 text-xs">No schedule to show.</p>';
+          const crewDays = ctx.crew_days || [];
+          if (!crewDays.length) {
+            const unsched = ctx.unscheduled_jobs || [];
+            if (unsched.length) {
+              const ids = unsched.map(j => j.job_id || '?').join(', ');
+              return `<p class="text-neutral-500 text-xs">No crew-days scheduled. Unscheduled: ${ids}</p>`;
+            }
+            if (ctx.error) return `<p class="text-neutral-500 text-xs">${ctx.error}</p>`;
+            return '<p class="text-neutral-500 text-xs">No crew-days scheduled.</p>';
+          }
+          const dayIsos = [...new Set(crewDays.map(cd => cd.day))].sort();
+          const crewRows = [];
+          const seen = new Set();
+          for (const cd of crewDays) {
+            const key = cd.crew_id;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            crewRows.push({ id: cd.crew_id, name: cd.crew_name || cd.crew_id });
+          }
+          crewRows.sort((a, b) => a.name.localeCompare(b.name));
+          const dayLabels = dayIsos.map(iso => {
+            const dt = this.parseIsoDate(iso);
+            return {
+              iso,
+              weekday: dt.toLocaleDateString(undefined, { weekday: 'short' }),
+              label: dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+            };
+          });
+          let html = '<div class="border border-surface-800 rounded-lg overflow-x-auto">';
+          if (ctx.week_start) {
+            html += `<div class="text-[10px] text-neutral-500 px-2 py-1 border-b border-surface-800">Week of ${ctx.week_start}</div>`;
+          }
+          html += '<table class="w-full text-[10px] border-collapse"><thead><tr class="bg-surface-900 text-neutral-500">';
+          html += '<th class="text-left py-1.5 px-2">Crew</th>';
+          dayLabels.forEach(d => {
+            html += `<th class="text-left py-1.5 px-1 border-l border-surface-800">${d.weekday}<br><span class="text-neutral-600">${d.label}</span></th>`;
+          });
+          html += '</tr></thead><tbody>';
+          for (const crew of crewRows) {
+            html += `<tr class="border-t border-surface-800"><td class="py-1.5 px-2 font-medium whitespace-nowrap">${crew.name}</td>`;
+            for (const d of dayLabels) {
+              const cd = crewDays.find(x => x.crew_id === crew.id && x.day === d.iso);
+              const stops = (cd?.stops || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+              html += '<td class="py-1.5 px-1 border-l border-surface-800 align-top min-w-[7rem]">';
+              if (!stops.length) html += '<span class="text-neutral-600">—</span>';
+              else {
+                stops.forEach(s => {
+                  const addr = (s.address || '').split(',')[0].slice(0, 28);
+                  const util = cd?.overbooked ? ' border-red-500/40' : ' border-accent-500/30';
+                  html += `<div class="mb-1 px-1 py-0.5 rounded border bg-accent-500/10${util}">`;
+                  html += `<div class="text-neutral-200 mono">${s.job_id || '?'}</div>`;
+                  if (addr) html += `<div class="text-neutral-500 truncate" title="${s.address || ''}">${addr}</div>`;
+                  html += `<div class="text-neutral-500">${s.start_time || ''}${s.travel_minutes_before ? ' · drive ' + s.travel_minutes_before + 'm' : ''}</div>`;
+                  html += '</div>';
+                });
+                if (cd?.utilization != null) {
+                  html += `<div class="text-neutral-600 mt-0.5">${Math.round(cd.utilization * 100)}% util</div>`;
+                }
+              }
+              html += '</td>';
+            }
+            html += '</tr>';
+          }
+          html += '</tbody></table></div>';
+          const unsched = ctx.unscheduled_jobs || [];
+          if (unsched.length) {
+            html += '<div class="text-[10px] text-amber-400/90 px-2 py-1 border-t border-surface-800">Unscheduled: ';
+            html += unsched.map(j => j.job_id || '?').join(', ');
+            html += '</div>';
+          }
+          return html;
         },
 
         buildScheduleTable(plan) {

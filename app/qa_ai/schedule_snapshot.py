@@ -145,3 +145,63 @@ def filter_qa_schedule_context(
         out["metrics"] = m
     out["allowed_job_ids"] = sorted(allowed_job_ids)
     return out
+
+
+def format_schedule_markdown(ctx: dict[str, Any]) -> str:
+    """Human-readable schedule table for QA reports and handoffs."""
+    if not ctx or ctx.get("error"):
+        return "_No schedule produced._"
+
+    lines: list[str] = []
+    week = ctx.get("week_start")
+    if week:
+        lines.append(f"Week starting **{week}**")
+    mode = ctx.get("scheduling_mode")
+    if mode:
+        lines.append(f"Mode: `{mode}`")
+    if ctx.get("owner_instruction"):
+        lines.append(f"Owner instruction: _{ctx['owner_instruction']}_")
+    if ctx.get("summary"):
+        lines.append(f"\n{ctx['summary']}\n")
+
+    crew_days = sorted(
+        ctx.get("crew_days") or [],
+        key=lambda x: (x.get("day", ""), x.get("crew_id", "")),
+    )
+    if crew_days:
+        lines.append("| Crew | Day | # | Job | Address | Time | Drive before |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        for cd in crew_days:
+            crew = cd.get("crew_name") or cd.get("crew_id") or "?"
+            day = cd.get("weekday") or cd.get("day") or "?"
+            for stop in sorted(cd.get("stops") or [], key=lambda s: s.get("order", 0)):
+                addr = (stop.get("address") or "")[:40]
+                lines.append(
+                    f"| {crew} | {day} | {stop.get('order', '?')} | "
+                    f"`{stop.get('job_id', '?')}` | {addr} | "
+                    f"{stop.get('start_time', '?')} | {stop.get('travel_minutes_before', 0)}m |"
+                )
+            util = cd.get("utilization")
+            if util is not None:
+                lines.append(
+                    f"| _{crew}_ | _{day}_ | | _util {round(float(util) * 100)}%_ | "
+                    f"drive {cd.get('total_drive_minutes', 0)}m | | |"
+                )
+    else:
+        lines.append("_No crew-days scheduled._")
+
+    unscheduled = ctx.get("unscheduled_jobs") or []
+    if unscheduled:
+        lines.append("\n**Unscheduled:**")
+        for job in unscheduled:
+            lines.append(f"- `{job.get('job_id', '?')}` — {job.get('address', '')[:50]}")
+
+    metrics = ctx.get("metrics") or {}
+    if metrics:
+        lines.append(
+            f"\n_Stops: {metrics.get('scheduled_stops', 0)}, "
+            f"unscheduled: {metrics.get('unscheduled_count', 0)}, "
+            f"overbooked days: {metrics.get('overbooked_days', 0)}_"
+        )
+
+    return "\n".join(lines)
