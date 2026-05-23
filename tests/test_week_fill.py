@@ -114,3 +114,20 @@ def test_late_only_job_respects_date_window():
     }
     assert scheduled_days, "late_only should be scheduled"
     assert min(scheduled_days) >= late
+
+
+def test_crew_day_packs_multiple_jobs_before_spreading():
+    """A crew-day with capacity should carry multiple jobs, not stop at one ~90m stop."""
+    _jobs_full_week(12)
+    result = asyncio.run(
+        SupervisorAgent().plan_week(SEED_WEEK_START, scheduling_mode=SchedulingMode.GEO_FIRST)
+    )
+    stop_counts = [len(cd.stops) for cd in result.plan.days if cd.stops]
+    assert stop_counts, "expected scheduled crew-days"
+    assert max(stop_counts) >= 3, (
+        f"expected at least one crew-day with 3+ jobs, got max {max(stop_counts)}"
+    )
+    thin = [cd for cd in result.plan.days if len(cd.stops) == 1 and cd.total_work_minutes <= 120]
+    assert len(thin) <= len(result.plan.days) // 2, (
+        f"too many thin single-job crew-days: {len(thin)} of {len(result.plan.days)}"
+    )

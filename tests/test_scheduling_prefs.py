@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from app.scheduling_prefs import (
     SchedulingMode,
     balance_day_bonus,
+    day_packing_bonus,
     geo_cluster_target_cap,
     parse_mode,
     placement_score_bonus,
@@ -36,6 +37,17 @@ def test_week_fill_bonus_respects_pinned_balance_day():
     wed = date(2026, 7, 8)
     assert week_fill_bonus(ws, ws, balance_day=wed) == 0.0
     assert week_fill_bonus(ws, wed, balance_day=wed) > week_fill_bonus(ws, ws + timedelta(days=4), balance_day=wed)
+
+
+def test_week_fill_bonus_zero_when_crew_day_in_progress():
+    ws = date(2026, 7, 6)
+    assert week_fill_bonus(ws, ws, crew_used_min=90) == 0.0
+    assert week_fill_bonus(ws, ws, crew_used_min=0) > 0.0
+
+
+def test_day_packing_bonus_prefers_in_progress_crew_day():
+    assert day_packing_bonus(90, 480) > day_packing_bonus(0, 480)
+    assert day_packing_bonus(450, 480) == 0.0
 
 
 def test_balance_day_bonus():

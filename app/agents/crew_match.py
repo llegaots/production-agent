@@ -21,6 +21,7 @@ from ..scheduling_prefs import (
     SchedulingMode,
     balance_day_bonus,
     cluster_sort_key,
+    day_packing_bonus,
     load_balance_bonus,
     placement_score_bonus,
     week_fill_bonus,
@@ -407,11 +408,19 @@ class CrewMatchAgent(Agent):
                     lb = load_balance_bonus(mode, used_min, day_loads)
                     if balance_day and day == balance_day:
                         lb *= 2.5
+                    # Defer cross-crew balancing until the day has meaningful load.
+                    if mode == SchedulingMode.BALANCED and max(day_loads) < 120:
+                        lb = 0.0
                     score = (
                         fit
                         + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
                         + lb
-                        + week_fill_bonus(ctx.week_start, day, balance_day=balance_day)
+                        + day_packing_bonus(used_min, crew.daily_minutes)
+                        + week_fill_bonus(
+                            ctx.week_start, day,
+                            balance_day=balance_day,
+                            crew_used_min=used_min,
+                        )
                         + balance_day_bonus(balance_day, day)
                     )
                     candidates.append((score, crew, day))

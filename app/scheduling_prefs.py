@@ -112,12 +112,28 @@ def load_balance_bonus(mode: SchedulingMode, crew_used_min: int, eligible_day_lo
     return 0.045 * (avg - crew_used_min)
 
 
+def day_packing_bonus(crew_used_min: int, daily_minutes: int) -> float:
+    """Prefer adding jobs to a crew-day that already has work (fill the truck).
+
+    Best practice: pack each crew-day toward capacity before opening a new
+    crew-day slot.  week_fill_bonus handles *which day* to start; this handles
+    *continuing* to fill a day once started.
+    """
+    if crew_used_min <= 0:
+        return 0.0
+    remaining = daily_minutes - crew_used_min
+    if remaining < 75:
+        return 0.0
+    return 5.0 + 0.018 * crew_used_min
+
+
 def week_fill_bonus(
     week_start: date,
     day: date,
     *,
     n_days: int = 5,
     balance_day: date | None = None,
+    crew_used_min: int = 0,
 ) -> float:
     """Prefer filling the planning week front-to-back (Mon → Fri).
 
@@ -127,7 +143,12 @@ def week_fill_bonus(
 
     When the owner pins a balance day (reorganize), do not pull work earlier
     than that day — focus capacity on the requested date.
+
+    Once a crew already has work on a day, day_packing_bonus continues that
+    route — week fill does not apply to in-progress crew-days.
     """
+    if crew_used_min > 0:
+        return 0.0
     offset = (day - week_start).days
     if offset < 0 or offset >= n_days:
         return 0.0

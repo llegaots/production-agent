@@ -114,7 +114,8 @@ class GeoClusterAgent(Agent):
             if ctx.crews else 480
         )
         by_load = max(1, int(round(total_minutes / max(1, avg_daily))))
-        by_count = max(1, (len(jobs) + 2) // 3)
+        # Aim for fewer, larger clusters (~4 jobs each) so crew-days fill up.
+        by_count = max(1, len(jobs) // max(4, len(ctx.crews) * 2))
         max_slots = max(1, len(ctx.crews) * len(week_days(ctx.week_start)))
         cap = geo_cluster_target_cap(mode, max_slots, len(jobs))
         target_clusters = min(len(jobs), max(by_load, by_count, 1), cap)
