@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from ..models import Crew, EquipmentKind, Job
+from ..models import Crew, EquipmentKind, Job, ServiceType, Skill
 from ..scheduling_prefs import (
     SchedulingMode,
+    balance_day_bonus,
     cluster_sort_key,
     load_balance_bonus,
     placement_score_bonus,
@@ -30,6 +31,26 @@ from .base import Agent, AgentContext, haversine_km, week_days
 
 def _fleet_quantity(kind: EquipmentKind) -> int:
     return sum(eq.quantity for eq in store.list_equipment() if eq.kind == kind)
+
+
+def _residential_crew_ids(crews: list[Crew]) -> list[str]:
+    """Residential peer crews (Alpha/Delta) — exclude commercial & rope-access."""
+    return [
+        c.id
+        for c in crews
+        if c.hourly_cost <= 130
+        and Skill.LADDER_CERT in c.skills
+        and Skill.ROPE_ACCESS not in c.skills
+    ]
+
+
+def _balance_peer_ids(ctx: AgentContext, job: Job | None = None) -> list[str]:
+    """Crews that may receive rebalanced load for this job context."""
+    explicit = ctx.blackboard.get("balance_crew_ids") or []
+    if explicit:
+        return list(explicit)
+    peers = _residential_crew_ids(ctx.crews)
+    return peers if peers else [c.id for c in ctx.crews]
 
 
 class CrewMatchAgent(Agent):
@@ -63,6 +84,17 @@ class CrewMatchAgent(Agent):
             score += 2.0
         if avg_difficulty >= 4 and crew.hourly_cost >= 180:
             score += 2.0
+        # Route residential / pressure-wash to residential crews, not commercial Bravo.
+        needs_pw = any(
+            j.service_type == ServiceType.PRESSURE_WASHING
+            or EquipmentKind.PRESSURE_WASHER in j.required_equipment
+            for j in jobs
+        )
+        needs_gutter = any(EquipmentKind.LADDER_32 in j.required_equipment for j in jobs)
+        if needs_pw and not needs_gutter and crew.hourly_cost >= 150:
+            score -= 10.0
+        if needs_gutter and Skill.LIFT_OPERATOR in crew.skills:
+            score += 4.0
         return score
 
     @staticmethod
@@ -133,6 +165,14 @@ class CrewMatchAgent(Agent):
         crews_by_id = {c.id: c for c in ctx.crews}
         crew_ids = [c.id for c in ctx.crews]
         days = week_days(ctx.week_start)
+        balance_day: date | None = ctx.blackboard.get("balance_day")
+        peer_ids: list[str] = ctx.blackboard.get("balance_crew_ids") or _residential_crew_ids(ctx.crews)
+        if not peer_ids:
+            peer_ids = crew_ids
+        spread_cap = ctx.blackboard.get("balance_max_spread") or max_spread_minutes
+        focus_days = [balance_day] if balance_day else days
+        allow_cross_day_off = balance_day is None
+
         out = {k: list(v) for k, v in merged.items()}
         before_count = sum(len(v) for v in out.values())
 
@@ -170,11 +210,46 @@ class CrewMatchAgent(Agent):
         max_iters = max(1, len(jobs_by_id) * len(days) * len(crew_ids))
         for _ in range(max_iters):
             improved = False
-            for day in days:
-                loads = {cid: work_minutes(cid, day) for cid in crew_ids}
-                if max(loads.values()) - min(loads.values()) <= max_spread_minutes:
+            # Pull jobs onto a pinned balance day before same-day peer swaps.
+            if balance_day:
+                loads = {cid: work_minutes(cid, balance_day) for cid in peer_ids}
+                if max(loads.values()) - min(loads.values()) > spread_cap:
+                    for src_day in days:
+                        if src_day == balance_day:
+                            continue
+                        for cid in peer_ids:
+                            src_key = (cid, src_day)
+                            for jid in list(out.get(src_key, [])):
+                                job = jobs_by_id.get(jid)
+                                if not job or balance_day < job.earliest_date or balance_day > job.latest_date:
+                                    continue
+                                targets = [
+                                    t
+                                    for t in peer_ids
+                                    if can_host(job, t, balance_day)
+                                ]
+                                if not targets:
+                                    continue
+                                target = min(targets, key=lambda t: work_minutes(t, balance_day))
+                                remove_job(src_key, jid)
+                                add_job((target, balance_day), jid)
+                                improved = True
+                                break
+                            if improved:
+                                break
+                        if improved:
+                            break
+                if improved:
                     continue
-                overloaded = max(crew_ids, key=lambda cid: loads[cid])
+
+            for day in focus_days:
+                scoped = peer_ids if peer_ids else crew_ids
+                loads = {cid: work_minutes(cid, day) for cid in scoped}
+                if not loads or max(loads.values()) - min(loads.values()) <= spread_cap:
+                    continue
+                overloaded = max(scoped, key=lambda cid: loads[cid])
+                if loads[overloaded] <= 0:
+                    continue
                 src_key = (overloaded, day)
                 src_jobs = list(out.get(src_key, []))
                 if not src_jobs:
@@ -186,10 +261,13 @@ class CrewMatchAgent(Agent):
                     job = jobs_by_id.get(jid)
                     if not job:
                         continue
-                    # Same-day cross-crew move (preferred).
+                    job_peers = [
+                        cid for cid in _balance_peer_ids(ctx, job) if cid in scoped
+                    ] or scoped
+                    # Same-day cross-crew move within peer group (preferred).
                     same_day_targets = [
                         cid
-                        for cid in crew_ids
+                        for cid in job_peers
                         if cid != overloaded and can_host(job, cid, day)
                     ]
                     if same_day_targets:
@@ -198,9 +276,11 @@ class CrewMatchAgent(Agent):
                         add_job((target, day), jid)
                         improved = True
                         break
-                    # Cross-day: same crew or different crew with slack (prefer earlier days).
+                    if not allow_cross_day_off:
+                        continue
+                    # Cross-day fallback only when owner did not pin a balance day.
                     alt_targets: list[tuple[int, int, str, date]] = []
-                    for cid in crew_ids:
+                    for cid in job_peers:
                         for alt_day in days:
                             if alt_day == day and cid == overloaded:
                                 continue
@@ -277,6 +357,17 @@ class CrewMatchAgent(Agent):
             if not eligible:
                 return False
 
+            needs_commercial = any(
+                EquipmentKind.LADDER_32 in j.required_equipment
+                or j.service_type == ServiceType.GUTTER_CLEANING
+                for j in jobs
+            )
+            if mode == SchedulingMode.BALANCED and not needs_commercial:
+                scope = ctx.blackboard.get("balance_crew_ids") or _residential_crew_ids(ctx.crews)
+                scoped = [c for c in eligible if c.id in scope]
+                if scoped:
+                    eligible = scoped
+
             # Reserve a rough drive budget: 20 min round-trip to area + 15 min
             # between stops. The TimeBudgetAgent computes the real number; this
             # is just enough headroom that we don't overbook by a wide margin.
@@ -305,12 +396,23 @@ class CrewMatchAgent(Agent):
                     if self._fleet_blocks_new_crew_on_day(used, crew.id, day, crew_equipment_kinds):
                         continue
                     remaining = crew.daily_minutes - used_min
-                    day_loads = [used.get((c.id, day), 0) for c in eligible]
+                    peer_ids = _balance_peer_ids(ctx)
+                    compare = (
+                        [c for c in eligible if c.id in peer_ids]
+                        if mode == SchedulingMode.BALANCED and peer_ids
+                        else eligible
+                    )
+                    day_loads = [used.get((c.id, day), 0) for c in compare]
+                    balance_day = ctx.blackboard.get("balance_day")
+                    lb = load_balance_bonus(mode, used_min, day_loads)
+                    if balance_day and day == balance_day:
+                        lb *= 2.5
                     score = (
                         fit
                         + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
-                        + load_balance_bonus(mode, used_min, day_loads)
-                        + week_fill_bonus(ctx.week_start, day)
+                        + lb
+                        + week_fill_bonus(ctx.week_start, day, balance_day=balance_day)
+                        + balance_day_bonus(balance_day, day)
                     )
                     candidates.append((score, crew, day))
 

@@ -29,6 +29,7 @@ from ..models import (
     PlanReview,
     WeekPlan,
 )
+from ..reorganize import ReorganizeIntent
 from ..scheduling_prefs import SchedulingMode, parse_mode
 from ..storage import store
 from .base import Agent, AgentContext, EventEmitter, llm_trace_callback, week_days
@@ -73,6 +74,7 @@ class SupervisorAgent(Agent):
         emitter: Optional[EventEmitter] = None,
         scheduling_mode: Optional[SchedulingMode | str] = None,
         job_ids: Optional[list[str]] = None,
+        reorganize_intent: Optional[ReorganizeIntent] = None,
     ) -> PlanResult:
         ws = week_start or _next_monday()
         week_end = week_days(ws)[-1]   # last working day of the 5-day window
@@ -105,6 +107,13 @@ class SupervisorAgent(Agent):
             week_start=ws, crews=crews, jobs=jobs, scheduling_mode=mode, emitter=emitter
         )
         ctx.blackboard["scheduling_mode"] = mode
+        if reorganize_intent:
+            if reorganize_intent.target_day:
+                ctx.blackboard["balance_day"] = reorganize_intent.target_day
+            if reorganize_intent.target_crew_ids:
+                ctx.blackboard["balance_crew_ids"] = list(reorganize_intent.target_crew_ids)
+            if reorganize_intent.max_spread_minutes:
+                ctx.blackboard["balance_max_spread"] = reorganize_intent.max_spread_minutes
 
         await ctx.emit(
             "System",

@@ -112,17 +112,35 @@ def load_balance_bonus(mode: SchedulingMode, crew_used_min: int, eligible_day_lo
     return 0.045 * (avg - crew_used_min)
 
 
-def week_fill_bonus(week_start: date, day: date, *, n_days: int = 5) -> float:
+def week_fill_bonus(
+    week_start: date,
+    day: date,
+    *,
+    n_days: int = 5,
+    balance_day: date | None = None,
+) -> float:
     """Prefer filling the planning week front-to-back (Mon → Fri).
 
     Default scheduling practice: pack the start of the week first, then spill
     to later days only when constraints require it (client date windows,
     crew capacity, equipment, location, load balancing, etc.).
+
+    When the owner pins a balance day (reorganize), do not pull work earlier
+    than that day — focus capacity on the requested date.
     """
     offset = (day - week_start).days
     if offset < 0 or offset >= n_days:
         return 0.0
+    if balance_day is not None and day < balance_day:
+        return 0.0
     return WEEK_FILL_WEIGHT * (n_days - 1 - offset)
+
+
+def balance_day_bonus(balance_day: date | None, day: date) -> float:
+    """Strong preference to populate the owner's target balance day."""
+    if balance_day and day == balance_day:
+        return 12.0
+    return 0.0
 
 
 # ── Cluster target cap ────────────────────────────────────────────────────────

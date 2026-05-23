@@ -55,3 +55,17 @@ def test_parse_reorganize_level_out_load():
         "Level this out — Alpha is overloaded Tuesday while Delta sits idle", ws
     )
     assert intent.scheduling_mode == SchedulingMode.BALANCED
+
+
+def test_parse_reorganize_wednesday_alpha_delta_spread():
+    ws = date(2026, 7, 6)
+    intent = parse_reorganize_instruction(
+        "Rebalance Wednesday July 8 so Alpha and Delta each carry 3-5 jobs "
+        "within 60 minutes of each other",
+        ws,
+    )
+    assert intent.scheduling_mode == SchedulingMode.BALANCED
+    assert intent.target_day == date(2026, 7, 8)
+    assert "crew_alpha" in intent.target_crew_ids
+    assert "crew_delta" in intent.target_crew_ids
+    assert intent.max_spread_minutes == 60

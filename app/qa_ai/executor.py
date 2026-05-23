@@ -118,6 +118,8 @@ async def execute_case(
                     "mode": intent.scheduling_mode.value,
                     "job_id": intent.job_id,
                     "target_day": intent.target_day.isoformat() if intent.target_day else None,
+                    "target_crew_ids": intent.target_crew_ids,
+                    "max_spread_minutes": intent.max_spread_minutes,
                 }
                 if intent.job_id and plan:
                     agent = ReschedulerAgent()
@@ -138,7 +140,12 @@ async def execute_case(
                     }
                 else:
                     sup = SupervisorAgent()
-                    plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode, job_ids=case_job_ids)
+                    plan = await sup.plan_week(
+                        ws,
+                        scheduling_mode=intent.scheduling_mode,
+                        job_ids=case_job_ids,
+                        reorganize_intent=intent,
+                    )
                     out.plan_results.append(plan)
                     out.final_plan = plan
                     _refresh_job_lookup(out)

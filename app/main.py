@@ -485,6 +485,8 @@ async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
                             "target_day": intent.target_day.isoformat()
                             if intent.target_day
                             else None,
+                            "target_crew_ids": intent.target_crew_ids,
+                            "max_spread_minutes": intent.max_spread_minutes,
                         },
                         kind="system",
                     ).model_dump(mode="json"),
@@ -519,7 +521,8 @@ async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
             else:
                 supervisor = SupervisorAgent()
                 result = await supervisor.plan_week(
-                    ws, emitter=emitter, scheduling_mode=intent.scheduling_mode
+                    ws, emitter=emitter, scheduling_mode=intent.scheduling_mode,
+                    reorganize_intent=intent,
                 )
                 try:
                     await persist_plan(result)

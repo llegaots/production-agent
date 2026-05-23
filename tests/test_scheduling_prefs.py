@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from app.scheduling_prefs import (
     SchedulingMode,
+    balance_day_bonus,
     geo_cluster_target_cap,
     parse_mode,
     placement_score_bonus,
@@ -28,6 +29,18 @@ def test_week_fill_bonus_zero_outside_planning_window():
     ws = date(2026, 7, 6)
     assert week_fill_bonus(ws, ws + timedelta(days=5)) == 0.0
     assert week_fill_bonus(ws, ws - timedelta(days=1)) == 0.0
+
+
+def test_week_fill_bonus_respects_pinned_balance_day():
+    ws = date(2026, 7, 6)
+    wed = date(2026, 7, 8)
+    assert week_fill_bonus(ws, ws, balance_day=wed) == 0.0
+    assert week_fill_bonus(ws, wed, balance_day=wed) > week_fill_bonus(ws, ws + timedelta(days=4), balance_day=wed)
+
+
+def test_balance_day_bonus():
+    wed = date(2026, 7, 8)
+    assert balance_day_bonus(wed, wed) > balance_day_bonus(wed, date(2026, 7, 6))
 
 
 def test_placement_bonus_crew_fill_prefers_headroom():
