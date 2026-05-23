@@ -61,16 +61,39 @@ export type JobListParams = {
   limit?: number;
 };
 
+const FETCH_TIMEOUT_MS = 20_000;
+
 async function labFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${getApiBase()}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed: ${res.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${getApiBase()}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", ...init?.headers },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        text ? text.slice(0, 300) : `Request failed: ${res.status} ${res.statusText}`,
+      );
+    }
+    return res.json() as Promise<T>;
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(
+        "Backend request timed out. Is FastAPI running on port 8000? Start: cd backend && PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8000",
+      );
+    }
+    if (e instanceof TypeError && e.message.includes("fetch")) {
+      throw new Error(
+        "Cannot reach API. Start the backend (port 8000) and frontend (port 3000), then reload.",
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json() as Promise<T>;
 }
 
 export function fetchLabJobs(params: JobListParams) {

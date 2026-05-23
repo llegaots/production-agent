@@ -35,7 +35,8 @@ export function OptimizerLab() {
   const [targetDate, setTargetDate] = useState("2026-07-08");
   const [jobs, setJobs] = useState<EditableJob[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Partial<OptimizerLabJob>>>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [apiStatus, setApiStatus] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OptimizerRunResult | null>(null);
@@ -44,14 +45,18 @@ export function OptimizerLab() {
   const loadJobs = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setApiStatus("Loading jobs from Supabase…");
     try {
-      const rows = await fetchLabJobs({
-        id_prefix: idPrefix || undefined,
-        id_from: idFrom || undefined,
-        id_to: idTo || undefined,
-        target_date: targetDate || undefined,
-        limit: 200,
-      });
+      const [rows, c] = await Promise.all([
+        fetchLabJobs({
+          id_prefix: idPrefix || undefined,
+          id_from: idFrom || undefined,
+          id_to: idTo || undefined,
+          target_date: targetDate || undefined,
+          limit: 200,
+        }),
+        fetchLabCrews(targetDate),
+      ]);
       setJobs(
         rows.map((j) => ({
           ...j,
@@ -59,10 +64,11 @@ export function OptimizerLab() {
         })),
       );
       setDrafts({});
-      const c = await fetchLabCrews(targetDate);
       setCrews(c);
+      setApiStatus(`Loaded ${rows.length} jobs, ${c.filter((x) => x.is_available).length} crews`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load jobs");
+      setApiStatus(null);
     } finally {
       setLoading(false);
     }
@@ -160,6 +166,12 @@ export function OptimizerLab() {
             <Link href="/chat" className="underline">
               Back to chat
             </Link>
+            {apiStatus ? (
+              <>
+                <br />
+                <span className="text-foreground">{apiStatus}</span>
+              </>
+            ) : null}
           </p>
         </div>
         <Button onClick={() => void handleRun()} disabled={running || selectedIds.length === 0}>

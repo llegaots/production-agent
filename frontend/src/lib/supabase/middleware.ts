@@ -4,12 +4,19 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
+  const pathname = request.nextUrl.pathname;
+
+  // FastAPI proxy — never run Supabase auth (was causing /optimizer-lab to hang on load).
+  if (pathname.startsWith("/api")) {
+    return supabaseResponse;
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
 
-  const isAuthPage = request.nextUrl.pathname.startsWith("/login");
+  const isAuthPage = pathname.startsWith("/login");
   /** Dev tool — OR-Tools lab uses backend API only; no Supabase session required. */
-  const isOptimizerLab = request.nextUrl.pathname.startsWith("/optimizer-lab");
+  const isOptimizerLab = pathname.startsWith("/optimizer-lab");
   const isProtected =
     request.nextUrl.pathname.startsWith("/chat") || request.nextUrl.pathname === "/";
 
