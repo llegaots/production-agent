@@ -9,7 +9,7 @@ import type { ChatSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { LogOut, MessageSquarePlus } from "lucide-react";
+import { FlaskConical, LogOut, MessageSquarePlus } from "lucide-react";
 
 export function SessionSidebar() {
   const supabase = createClient();
@@ -84,7 +84,14 @@ export function SessionSidebar() {
           })}
         </ul>
       </ScrollArea>
-      <div className="border-t p-2">
+      <div className="border-t space-y-1 p-2">
+        <Link
+          href="/optimizer-lab"
+          className="hover:bg-accent flex w-full items-center justify-start rounded-md border px-3 py-2 text-sm"
+        >
+          <FlaskConical className="mr-2 h-4 w-4" />
+          Optimizer lab
+        </Link>
         <Button variant="ghost" className="w-full justify-start" size="sm" onClick={() => void signOut()}>
           <LogOut className="mr-2 h-4 w-4" />
           Sign out

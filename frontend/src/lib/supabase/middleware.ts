@@ -10,6 +10,7 @@ export async function updateSession(request: NextRequest) {
   const isAuthPage = request.nextUrl.pathname.startsWith("/login");
   const isProtected =
     request.nextUrl.pathname.startsWith("/chat") ||
+    request.nextUrl.pathname.startsWith("/optimizer-lab") ||
     request.nextUrl.pathname === "/";
 
   if (!url || !key) {

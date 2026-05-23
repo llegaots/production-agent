@@ -67,6 +67,67 @@ class OperationsRepository:
         rows = q.order("earliest_date").limit(limit).execute().data or []
         return [Job.model_validate(r) for r in rows]
 
+    def list_jobs_for_lab(
+        self,
+        *,
+        id_prefix: str = "qa_job_",
+        id_from: str | None = None,
+        id_to: str | None = None,
+        target_date: date | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        q = self._db.table("jobs").select("*")
+        if id_prefix:
+            q = q.like("id", f"{id_prefix}%")
+        if id_from:
+            q = q.gte("id", id_from)
+        if id_to:
+            q = q.lte("id", id_to)
+        if status:
+            q = q.eq("status", status)
+        if target_date:
+            d = target_date.isoformat()
+            q = q.lte("earliest_date", d).gte("latest_date", d)
+        rows = q.order("id").limit(limit).execute().data or []
+        return rows
+
+    def update_job(self, job_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "service_type",
+            "address",
+            "estimated_minutes",
+            "earliest_date",
+            "latest_date",
+            "required_skills",
+            "required_equipment",
+            "lat",
+            "lng",
+            "status",
+            "notes",
+            "difficulty",
+        }
+        payload = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not payload:
+            raise ValueError("No fields to update")
+        for key in ("earliest_date", "latest_date"):
+            if key in payload and hasattr(payload[key], "isoformat"):
+                payload[key] = payload[key].isoformat()
+        resp = (
+            self._db.table("jobs")
+            .update(payload)
+            .eq("id", job_id)
+            .execute()
+        )
+        if not resp.data:
+            raise ValueError(f"Job {job_id} not found")
+        return resp.data[0]
+
+    def delete_job(self, job_id: str) -> None:
+        resp = self._db.table("jobs").delete().eq("id", job_id).execute()
+        if not resp.data:
+            raise ValueError(f"Job {job_id} not found")
+
     def list_service_history(self, client_id: str, limit: int = 10) -> list[ServiceHistoryRecord]:
         rows = (
             self._db.table("service_history")
