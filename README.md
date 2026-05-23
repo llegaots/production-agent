@@ -21,6 +21,7 @@ production-agent/
 │       ├── optimizer/       # OR-Tools VRP (Phase 3, no DB)
 │       ├── tools/           # Orchestrator tool wrappers (Phase 4)
 │       ├── critic/          # Deterministic + LLM schedule critic (Phase 5)
+│       ├── orchestrator/    # Anthropic tool loop + critic iterations (Phase 6)
 │       └── routers/         # HTTP routes
 ├── supabase/
 │   ├── config.toml          # Supabase CLI config
@@ -49,11 +50,11 @@ production-agent/
 | 2 — Data models | Done |
 | 3 — OR-Tools optimizer | Done |
 | 4 — Tool wrappers | Done |
-| 5 — Critic agent | **Current** |
-| 6 — Orchestrator | Pending |
-| 6 — Specialists | Pending |
-| 7 — REST API | Pending |
-| 8 — Dispatcher UI | Pending |
+| 5 — Critic agent | Done |
+| 6 — Orchestrator loop | **Current** |
+| 7 — Specialists | Pending |
+| 8 — REST API | Pending |
+| 9 — Dispatcher UI | Pending |
 
 ## License
 

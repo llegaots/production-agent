@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = Field(default=None)
     anthropic_model: str = Field(default="claude-sonnet-4-20250514")
+    orchestrator_max_iterations: int = Field(default=4, ge=1, le=10)
+
+    langfuse_public_key: str | None = Field(default=None)
+    langfuse_secret_key: str | None = Field(default=None)
+    langfuse_host: str = Field(default="https://cloud.langfuse.com")
 
 
 @lru_cache
