@@ -1,0 +1,1 @@
+-- Phase 2 will add seed data here. Kept empty for Phase 1 CLI compatibility.
