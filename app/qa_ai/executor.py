@@ -23,8 +23,10 @@ class CaseExecutionResult:
         self.final_plan: Optional[PlanResult] = None
         self.scheduling_mode: Optional[str] = None
         self.owner_instructions: list[str] = []
+        self._snapshot: Optional[dict[str, Any]] = None  # cached before test job deletion
 
-    def to_dict(self) -> dict[str, Any]:
+    def _build_dict(self) -> dict[str, Any]:
+        """Build the serialisable snapshot. Always reads from store while jobs are present."""
         return {
             "plan_count": len(self.plan_results),
             "final_plan": plan_result_context(
@@ -34,6 +36,12 @@ class CaseExecutionResult:
             ),
             "steps_executed": self.events,
         }
+
+    def to_dict(self) -> dict[str, Any]:
+        # Return the pre-computed snapshot if it was cached before test-job cleanup.
+        if self._snapshot is not None:
+            return self._snapshot
+        return self._build_dict()
 
 
 async def execute_case(
@@ -127,6 +135,10 @@ async def execute_case(
             if not plan:
                 evt["error"] = "no_plan_before_reschedule"
             elif job_id:
+                # Case designers often use bare IDs; the test-job manager prefixes
+                # them with qa_ — try the prefixed version if the bare one is absent.
+                if not store.get_job(job_id) and store.get_job(f"qa_{job_id}"):
+                    job_id = f"qa_{job_id}"
                 agent = ReschedulerAgent()
                 pref = step.get("preferred_day")
                 pref_date = date.fromisoformat(pref) if pref else None
@@ -167,8 +179,11 @@ async def execute_case(
     if not out.final_plan and plan:
         out.final_plan = plan
 
-    # Clean up test jobs from store and Supabase after the case completes.
+    # Capture the schedule snapshot while test jobs are still in the store.
+    # Only then remove them so that store.get_job() lookups in the snapshot
+    # serialiser return full job details instead of falling back to "unknown".
     if inserted_job_ids:
+        out._snapshot = out._build_dict()
         await delete_test_jobs(inserted_job_ids)
 
     return out

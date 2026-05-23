@@ -213,6 +213,33 @@ class CrewMatchAgent(Agent):
             key = (entry["crew_id"], entry["day"])
             merged.setdefault(key, []).extend(entry["job_ids"])
 
+        # Backfill pass: retry each unscheduled job individually now that the
+        # main clusters have been placed.  Jobs that were skipped due to cluster
+        # ordering may find capacity in an already-started crew/day.
+        still_unscheduled: list[str] = []
+        for jid in unscheduled:
+            job = jobs_by_id.get(jid)
+            if job is None:
+                still_unscheduled.append(jid)
+                continue
+            if place([job], "backfill"):
+                last = draft_plan[-1]
+                # Re-merge: the new entry may extend an existing crew/day key.
+                key = (last["crew_id"], last["day"])
+                merged.setdefault(key, []).extend(last["job_ids"])
+                # Remove duplicates while preserving order.
+                merged[key] = list(dict.fromkeys(merged[key]))
+                crew_name = next(c.name for c in ctx.crews if c.id == last["crew_id"])
+                await ctx.emit(
+                    self.name,
+                    "backfill",
+                    f"Backfilled job {jid} ({job.estimated_minutes}m) -> {crew_name} on {last['day'].isoformat()}.",
+                    detail={"crew_id": last["crew_id"], "day": last["day"].isoformat(), "job_id": jid},
+                )
+            else:
+                still_unscheduled.append(jid)
+        unscheduled = still_unscheduled
+
         # Safety invariant: every job in ctx.jobs must appear in either the
         # draft plan or the unscheduled list.  Jobs that are silently dropped
         # (e.g. due to an exception in placement logic) are caught here and
