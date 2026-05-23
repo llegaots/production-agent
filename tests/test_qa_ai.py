@@ -79,6 +79,7 @@ def test_ai_qa_reflective_loop(monkeypatch):
 
     monkeypatch.setattr("app.agents.geo_cluster.geocoder.geocode", _fake_geocode)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("app.qa_ai.runner.llm", type("FakeLLM", (), {"enabled": True})())
 
     design_cases = [case_a, case_b]
     critique_iter = iter(critiques)

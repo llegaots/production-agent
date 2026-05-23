@@ -5,6 +5,7 @@ from datetime import date
 from typing import Any, Optional
 
 from ..agents import ReschedulerAgent, SupervisorAgent
+from ..agents.base import haversine_km
 from ..agents.supervisor import _next_monday
 from ..models import PlanResult
 from ..reorganize import parse_reorganize_instruction
@@ -23,14 +24,21 @@ class CaseExecutionResult:
         self.final_plan: Optional[PlanResult] = None
         self.scheduling_mode: Optional[str] = None
         self.owner_instructions: list[str] = []
+        # Pre-built snapshot captured while test jobs are still in the store,
+        # so stop-level job lookups don't return {"job_id": "unknown"}.
+        self._final_plan_context: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "plan_count": len(self.plan_results),
-            "final_plan": plan_result_context(
-                self.final_plan,
-                scheduling_mode=self.scheduling_mode,
-                owner_instruction=" | ".join(self.owner_instructions) or None,
+            "final_plan": (
+                self._final_plan_context
+                if self._final_plan_context is not None
+                else plan_result_context(
+                    self.final_plan,
+                    scheduling_mode=self.scheduling_mode,
+                    owner_instruction=" | ".join(self.owner_instructions) or None,
+                )
             ),
             "steps_executed": self.events,
         }
@@ -106,6 +114,22 @@ async def execute_case(
                 "count": len(inserted_job_ids),
                 "ids": inserted_job_ids,
             })
+
+            # Fix: remove seed jobs from the store so the planner only schedules
+            # the defined test jobs, not the 27-job seed dataset. This prevents
+            # the planner from fabricating unrelated job IDs into the schedule.
+            seed_job_ids = [
+                jid for jid in list(store.jobs.keys())
+                if not jid.startswith("qa_")
+            ]
+            for jid in seed_job_ids:
+                store.jobs.pop(jid, None)
+            out.events.append({
+                "step": -1,
+                "action": "seed_jobs_removed",
+                "count": len(seed_job_ids),
+                "reason": "test_jobs provided — planner restricted to test job set only",
+            })
     except Exception:
         inserted_job_ids = []
 
@@ -123,6 +147,11 @@ async def execute_case(
                 store.scheduling_mode = mode
                 sup = SupervisorAgent()
                 plan = await sup.plan_week(ws, scheduling_mode=mode)
+
+                # Validate and repair the plan when test_jobs are defined.
+                if inserted_job_ids:
+                    plan = _validate_plan_against_test_jobs(plan, inserted_job_ids, evt)
+
                 out.plan_results.append(plan)
                 out.final_plan = plan
                 store.set_plan(plan)
@@ -131,6 +160,11 @@ async def execute_case(
                 except Exception:
                     pass
                 evt["scheduling_mode"] = mode.value
+
+                # Geo-routing pre-flight: verify jobs are grouped by geographic
+                # zone when geo_first mode is active and test jobs are defined.
+                if inserted_job_ids and mode == SchedulingMode.GEO_FIRST:
+                    evt["geo_routing_check"] = _check_geo_routing(plan, inserted_job_ids)
 
             elif action == "reorganize":
                 text = step.get("instruction") or step.get("text") or ""
@@ -162,6 +196,8 @@ async def execute_case(
                 else:
                     sup = SupervisorAgent()
                     plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                    if inserted_job_ids:
+                        plan = _validate_plan_against_test_jobs(plan, inserted_job_ids, evt)
                     out.plan_results.append(plan)
                     out.final_plan = plan
                     try:
@@ -220,11 +256,127 @@ async def execute_case(
         _llm.chat = _original_chat
         _geocoder.geocode = _original_geocode
 
+    # Capture the plan snapshot while test jobs are still in the store so that
+    # stop-level job lookups in schedule_snapshot.py can resolve every job_id.
+    # Without this, delete_test_jobs (below) removes the jobs from the store
+    # before to_dict() runs, causing every stop to show job_id='unknown'.
+    if inserted_job_ids and out.final_plan:
+        out._final_plan_context = plan_result_context(
+            out.final_plan,
+            scheduling_mode=out.scheduling_mode,
+            owner_instruction=" | ".join(out.owner_instructions) or None,
+        )
+
     # Clean up test jobs from store and Supabase after the case completes.
     if inserted_job_ids:
         await delete_test_jobs(inserted_job_ids)
 
     return out
+
+
+def _validate_plan_against_test_jobs(
+    plan: PlanResult,
+    inserted_job_ids: list[str],
+    evt: dict[str, Any],
+) -> PlanResult:
+    """Remove any scheduled stops whose job_id is not in the test_jobs set,
+    and ensure unscheduled_job_ids only lists test job IDs.
+
+    This prevents seed-dataset job IDs (job_W08, job_P01, etc.) from
+    appearing in the schedule when the case defined only a small test set.
+    Also ensures every test job appears in exactly one of: scheduled stops
+    or unscheduled_job_ids.
+    """
+    valid_ids: set[str] = set(inserted_job_ids)
+    fabricated_ids: list[str] = []
+
+    # Remove any stop that references a job outside the test set.
+    for cd in plan.plan.days:
+        kept = [s for s in cd.stops if s.job_id in valid_ids]
+        removed = [s.job_id for s in cd.stops if s.job_id not in valid_ids]
+        fabricated_ids.extend(removed)
+        cd.stops = kept
+        cd.total_work_minutes = sum(s.duration_minutes for s in kept)
+
+    # Remove crew_days that have no stops left after filtering.
+    plan.plan.days = [cd for cd in plan.plan.days if cd.stops]
+
+    # Filter unscheduled_job_ids: only keep entries that belong to the test set.
+    unknown_unscheduled = [
+        jid for jid in plan.plan.unscheduled_job_ids if jid not in valid_ids
+    ]
+    plan.plan.unscheduled_job_ids = [
+        jid for jid in plan.plan.unscheduled_job_ids if jid in valid_ids
+    ]
+
+    # Any test job that is neither scheduled nor unscheduled must be accounted for.
+    scheduled_ids: set[str] = {
+        s.job_id for cd in plan.plan.days for s in cd.stops
+    }
+    already_unscheduled: set[str] = set(plan.plan.unscheduled_job_ids)
+    for jid in valid_ids:
+        if jid not in scheduled_ids and jid not in already_unscheduled:
+            plan.plan.unscheduled_job_ids.append(jid)
+
+    evt["test_job_validation"] = {
+        "valid_ids": sorted(valid_ids),
+        "fabricated_stops_removed": sorted(set(fabricated_ids)),
+        "unknown_unscheduled_removed": unknown_unscheduled,
+        "scheduled_count": len(scheduled_ids & valid_ids),
+        "unscheduled_count": len(plan.plan.unscheduled_job_ids),
+    }
+    return plan
+
+
+def _check_geo_routing(plan: PlanResult, inserted_job_ids: list[str]) -> dict[str, Any]:
+    """Pre-flight check for geo_routing mode.
+
+    Verifies that the schedule actually groups jobs by geographic zone by
+    measuring average intra-crew-day drive distance for each crew-day and
+    flagging if cross-zone travel looks excessive (> 15 km per crew-day).
+    """
+    GEO_THRESHOLD_KM = 15.0
+    issues: list[str] = []
+    crew_day_stats: list[dict] = []
+
+    for cd in plan.plan.days:
+        if len(cd.stops) < 2:
+            continue
+        job_locs: list[tuple[float, float]] = []
+        for s in cd.stops:
+            j = store.get_job(s.job_id)
+            if j:
+                job_locs.append((j.lat, j.lng))
+
+        if len(job_locs) < 2:
+            continue
+
+        # Compute total route distance among the stops (chained)
+        route_km = sum(
+            haversine_km(job_locs[i][0], job_locs[i][1],
+                         job_locs[i + 1][0], job_locs[i + 1][1])
+            for i in range(len(job_locs) - 1)
+        )
+        stat = {
+            "crew_id": cd.crew_id,
+            "day": cd.day.isoformat(),
+            "stops": len(cd.stops),
+            "route_km": round(route_km, 2),
+            "exceeds_threshold": route_km > GEO_THRESHOLD_KM,
+        }
+        crew_day_stats.append(stat)
+        if route_km > GEO_THRESHOLD_KM:
+            issues.append(
+                f"{cd.crew_id} on {cd.day.isoformat()}: {route_km:.1f} km "
+                f"route exceeds {GEO_THRESHOLD_KM} km geo threshold"
+            )
+
+    return {
+        "threshold_km": GEO_THRESHOLD_KM,
+        "crew_day_stats": crew_day_stats,
+        "issues": issues,
+        "passed": len(issues) == 0,
+    }
 
 
 async def apply_owner_retry(retry: dict, *, week_start: date) -> CaseExecutionResult:
