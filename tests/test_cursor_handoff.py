@@ -33,6 +33,32 @@ def test_trigger_skips_without_api_key(monkeypatch):
     assert result.skipped_reason
 
 
+def test_trigger_skips_when_auto_handoff_disabled(tmp_path, monkeypatch):
+    md = tmp_path / "cursor-handoff_qa_y.md"
+    md.write_text("# handoff\n\nFix things.", encoding="utf-8")
+    monkeypatch.setenv("CURSOR_API_KEY", "key_test")
+    monkeypatch.setenv("CURSOR_REPOSITORY", "https://github.com/example/production-agent")
+    monkeypatch.setenv("CURSOR_AUTO_HANDOFF", "false")
+
+    client = CursorCloudClient()
+    assert client.auto_handoff_default is False
+
+    async def _run():
+        with patch("app.cursor_handoff.cursor_cloud", client):
+            return await trigger_automatic_handoff(
+                run_id="qa_y",
+                handoff_path=md,
+                passed=False,
+                overall_score=40,
+                force=False,
+                auto_handoff=None,
+            )
+
+    result = asyncio.run(_run())
+    assert not result.launched
+    assert "auto_handoff disabled" in (result.skipped_reason or "")
+
+
 def test_trigger_launches_when_configured(tmp_path, monkeypatch):
     md = tmp_path / "cursor-handoff_qa_x.md"
     md.write_text("# handoff\n\nFix crew_fill scoring.", encoding="utf-8")

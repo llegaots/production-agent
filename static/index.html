@@ -404,7 +404,8 @@
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <span class="text-[10px] text-neutral-500" x-show="config.llm_enabled && qaApiReady">
             QA on <span x-text="config.llm_model"></span>
-            <template x-if="config.cursor_handoff_model"><span> · auto-fix on <span x-text="config.cursor_handoff_model"></span></span></template>
+            <template x-if="config.cursor_auto_handoff && config.cursor_handoff_model"><span> · auto-fix on <span x-text="config.cursor_handoff_model"></span></span></template>
+            <template x-if="!config.cursor_auto_handoff && config.cursor_handoff_enabled"><span> · manual Cursor handoff</span></template>
           </span>
           <span class="text-[10px] text-amber-400" x-show="!config.llm_enabled && qaApiReady">No LLM key — use legacy QA</span>
           <button @click="runQaSuite('ai')" :disabled="qaRunning || !config.llm_enabled"
@@ -478,10 +479,15 @@
                 Each run designs up to <strong x-text="$store ? $store.qaMaxCases : 'a few'">a few</strong> novel scenarios,
                 executes them against real scheduling agents, and critiques the results.
                 Cases that <em>pass</em> are saved to the registry so they're never repeated.
-                If issues are found, a <strong>Cursor Cloud Agent is auto-launched once</strong>
-                to fix the code — it does NOT re-run QA automatically.
-                After it pushes, come back here and click <strong>Run AI QA suite</strong>
-                again to verify the fix.
+                <template x-if="config.cursor_auto_handoff">
+                  <span>If issues are found, a <strong>Cursor Cloud Agent is auto-launched once</strong>
+                  to fix the code — it does NOT re-run QA automatically.
+                  After it pushes, come back here and click <strong>Run AI QA suite</strong>
+                  again to verify the fix.</span>
+                </template>
+                <template x-if="!config.cursor_auto_handoff">
+                  <span>When issues are found, copy the <strong>handoff file</strong> path below and paste it into Cursor manually — auto-launch is off (<code class="mono">CURSOR_AUTO_HANDOFF=false</code>).</span>
+                </template>
                 To explore completely fresh scenarios, click <strong>Clear registry</strong> above.
               </div>
               <p class="font-medium text-neutral-300">Cursor cloud agent</p>
@@ -955,7 +961,6 @@
               body: JSON.stringify({
                 reset_seed: true,
                 mode: qaMode,
-                auto_cursor_handoff: true,
                 background: true,
               }),
             });
