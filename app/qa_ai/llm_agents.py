@@ -82,6 +82,10 @@ You are reviewing a DRAFT weekly schedule produced by software. Your job is to d
 run this week in the field, or reject it.
 
 CRITICAL RULES:
+- persona_story and what_good_looks_like describe the SCENARIO SETUP — NOT the actual schedule.
+  NEVER fail because the persona_story says a crew is overloaded if crew_days / workload_balance
+  metrics show otherwise. Judge ONLY what is in crew_days and workload_balance.
+- Use workload_balance.max_alpha_delta_spread_minutes for Alpha vs Delta balance (≤150 min is OK).
 - The schedule contains ONLY qa_* test job IDs for this scenario (e.g. qa_job_001).
 - NEVER mention seed/demo IDs like job_W05, job_W11, job_G05, job_H02, job_P01 — they are NOT in this test.
 - Evaluate using ONLY job IDs listed in allowed_job_ids or shown in crew_days stops.

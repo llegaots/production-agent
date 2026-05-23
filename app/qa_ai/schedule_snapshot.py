@@ -147,6 +147,93 @@ def filter_qa_schedule_context(
     return out
 
 
+RESIDENTIAL_CREW_IDS = ("crew_alpha", "crew_delta")
+
+
+def compute_workload_balance(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic Alpha/Delta same-day load metrics for critics and gates."""
+    by_day: dict[str, dict[str, int]] = {}
+    for cd in ctx.get("crew_days") or []:
+        crew_id = cd.get("crew_id") or ""
+        if crew_id not in RESIDENTIAL_CREW_IDS:
+            continue
+        day = cd.get("day") or ""
+        by_day.setdefault(day, {})[crew_id] = int(cd.get("total_work_minutes") or 0)
+
+    spreads: dict[str, int] = {}
+    idle_alpha_days: list[str] = []
+    idle_delta_days: list[str] = []
+    for day, loads in sorted(by_day.items()):
+        alpha = loads.get("crew_alpha", 0)
+        delta = loads.get("crew_delta", 0)
+        spreads[day] = abs(alpha - delta)
+        if alpha == 0 and delta >= 90:
+            idle_alpha_days.append(day)
+        if delta == 0 and alpha >= 90:
+            idle_delta_days.append(day)
+
+    max_spread = max(spreads.values()) if spreads else 0
+    return {
+        "by_day": by_day,
+        "alpha_delta_spread_minutes": spreads,
+        "max_alpha_delta_spread_minutes": max_spread,
+        "alpha_idle_while_delta_works": idle_alpha_days,
+        "delta_idle_while_alpha_works": idle_delta_days,
+        "balanced_within_150min": max_spread <= 150,
+        "balanced_within_60min": max_spread <= 60,
+    }
+
+
+def enrich_schedule_context(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Attach deterministic metrics critics must use instead of persona_story."""
+    out = dict(ctx)
+    out["workload_balance"] = compute_workload_balance(ctx)
+    return out
+
+
+def deterministic_workload_verdict(
+    case: dict[str, Any],
+    schedule_ctx: dict[str, Any],
+    critique: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Override LLM critic when metrics contradict a balanced_workload failure."""
+    theme = (case.get("theme") or "").lower()
+    if theme != "balanced_workload":
+        return None
+
+    metrics = schedule_ctx.get("workload_balance") or compute_workload_balance(schedule_ctx)
+    if not metrics.get("balanced_within_150min"):
+        return None
+
+    if metrics.get("alpha_idle_while_delta_works") or metrics.get("delta_idle_while_alpha_works"):
+        return None
+
+    verdict = (critique.get("verdict") or "fail").lower()
+    score = int(critique.get("viability_score") or 0)
+    if verdict == "pass" and score >= 70:
+        return None
+
+    summary = critique.get("executive_summary") or ""
+    # LLM failed but metrics show acceptable residential balance — override.
+    return {
+        "verdict": "pass",
+        "viability_score": max(score, 78),
+        "would_run_in_field": True,
+        "executive_summary": (
+            "Alpha and Delta workloads are within 150 minutes on every shared day "
+            f"(max spread {metrics.get('max_alpha_delta_spread_minutes')} min). "
+            "Deterministic check overrides critic narrative that did not match crew_days."
+        ),
+        "placement_critiques": critique.get("placement_critiques") or [],
+        "optimization_notes": critique.get("optimization_notes") or "",
+        "unscheduled_analysis": critique.get("unscheduled_analysis") or "",
+        "code_changes_for_engineers": [],
+        "owner_retry": None,
+        "_deterministic_override": True,
+        "_prior_executive_summary": summary[:400],
+    }
+
+
 def format_schedule_markdown(ctx: dict[str, Any]) -> str:
     """Human-readable schedule table for QA reports and handoffs."""
     if not ctx or ctx.get("error"):

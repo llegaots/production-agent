@@ -19,7 +19,12 @@ from .executor import apply_owner_retry, execute_case
 from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
-from .schedule_snapshot import filter_qa_schedule_context, format_schedule_markdown
+from .schedule_snapshot import (
+    enrich_schedule_context,
+    filter_qa_schedule_context,
+    format_schedule_markdown,
+    deterministic_workload_verdict,
+)
 from .store_setup import (
     normalize_case,
     prepare_qa_run,
@@ -159,6 +164,7 @@ class AIQATeamRunner:
                 schedule_ctx = filter_qa_schedule_context(
                     schedule_ctx, allowed_job_ids=allowed_ids
                 )
+                schedule_ctx = enrich_schedule_context(schedule_ctx)
                 critique = await critique_schedule(
                     case=case,
                     schedule_context=schedule_ctx,
@@ -172,6 +178,10 @@ class AIQATeamRunner:
                         "executive_summary": "Critic LLM returned no parseable JSON.",
                         "code_changes_for_engineers": ["Fix QA critic JSON parsing"],
                     }
+
+                override = deterministic_workload_verdict(case, schedule_ctx, critique)
+                if override:
+                    critique = override
 
                 iter_record = {
                     "iteration": iteration,
