@@ -23,7 +23,8 @@ production-agent/
 │       ├── critic/          # Deterministic + LLM schedule critic (Phase 5)
 │       ├── orchestrator/    # Anthropic tool loop + critic iterations (Phase 6)
 │       ├── specialists/     # Intake parser + client messenger (Phase 7)
-│       └── routers/         # HTTP routes
+│       ├── chat/            # Chat agent + SSE (Phase 8)
+│       └── routers/         # HTTP routes (health, data, chat, schedules)
 ├── supabase/
 │   ├── config.toml          # Supabase CLI config
 │   └── migrations/          # Versioned SQL (db push)
@@ -53,8 +54,8 @@ production-agent/
 | 4 — Tool wrappers | Done |
 | 5 — Critic agent | Done |
 | 6 — Orchestrator loop | Done |
-| 7 — Specialists | **Current** |
-| 8 — REST API | Pending |
+| 7 — Specialists | Done |
+| 8 — Chat API | **Current** |
 | 9 — Dispatcher UI | Pending |
 
 ## License

@@ -8,7 +8,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-ScheduleRunStatus = Literal["running", "approved", "needs_human_review", "failed"]
+ScheduleRunStatus = Literal[
+    "running", "approved", "rejected", "needs_human_review", "failed"
+]
 
 
 class ScheduleWeekInput(BaseModel):
