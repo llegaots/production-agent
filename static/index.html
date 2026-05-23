@@ -386,11 +386,11 @@
 
         <!-- Registry / coverage row -->
         <template x-if="qaRegistry.total >= 0">
-          <div class="w-full flex flex-wrap items-center gap-2 text-[10px]">
+            <div class="w-full flex flex-wrap items-center gap-2 text-[10px]">
             <span class="text-neutral-500">
-              Scenarios passed: <strong x-text="qaRegistry.total"></strong>
-              <span x-show="qaRegistry.total > 0" class="ml-1 text-neutral-400">
-                · <span x-text="Object.entries(qaRegistry.coverage || {}).filter(([,v])=>v>0).map(([k])=>k.split(':')[1]).join(', ')"></span> covered
+              Covered: <strong x-text="(qaRegistry.themes_covered||[]).join(', ') || 'none yet'"></strong>
+              <span x-show="qaRegistry.next_theme" class="ml-2 text-accent-500">
+                → next: <strong x-text="qaRegistry.next_theme"></strong>
               </span>
             </span>
             <button @click="clearRegistry()" :disabled="qaRunning || qaRegistry.total === 0"

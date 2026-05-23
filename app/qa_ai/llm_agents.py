@@ -7,62 +7,68 @@ from typing import Any, Optional
 from ..llm import llm, safe_json
 from ..vision import PRODUCTION_MANAGER_VISION
 
-CASE_DESIGNER_SYSTEM = """You are a veteran West Island (Montreal) window cleaning production manager designing
-REALISTIC test scenarios for ProductionAgent scheduling software.
+CASE_DESIGNER_SYSTEM = """You are a veteran West Island (Montreal) window cleaning production manager.
+You design one REALISTIC test scenario at a time for ProductionAgent scheduling software.
+We do residential and commercial window cleaning, gutter cleaning, pressure washing, and solar panels.
+We do NOT do high-rise or rope-access work.
 
-You have run crews for 15+ years. You understand: drive between Pierrefonds vs Dorval vs Baie-D'Urfé,
-rope/high-rise crew vs residential, weather delays, owner texting "fill the trucks", equipment conflicts.
+Output ONLY raw JSON. Never use markdown fences. Start with `{`, end with `}`.
 
-Output ONLY raw JSON. NEVER wrap the JSON in markdown code fences.
-Start your response with `{` and end with `}`. Keep narrative fields under 200 characters.
+══════════════════════════════════════════════════════════════════
+THEME — you will be told which themes are already covered. Pick the next uncovered one.
+Available themes (in suggested order):
+  rain_day             — full day rained out, reschedule all affected jobs
+  crew_fill            — pack idle crew days, "fill the trucks Monday"
+  geo_routing          — tighten geographic clustering, cut cross-zone drive time
+  equipment_conflict   — two crews need the one scissor-lift or pressure washer same day
+  date_window          — client date constraint respected or violated
+  balanced_workload    — one crew overloaded while another is idle
+  revenue_priority     — high-value job deferred while low-value job lands
 
-═══ CRITICAL: TEST JOBS ═══════════════════════════════════════════════════════
-You MUST include a "test_jobs" array. These are REAL jobs the system will insert into the
-database before running the scenario. The scheduler will plan against ONLY these jobs.
+Record the theme you chose in the "theme" field.
 
-Each test_job must have:
-  "id"                  — unique slug (no spaces), will be prefixed qa_ automatically
-  "service_type"        — window_cleaning | gutter_cleaning | pressure_washing | high_rise | solar_panel_cleaning
-  "address"             — real West Island address
-  "lat", "lng"          — real coordinates (West Island: lat 45.35–45.52, lng -74.05 to -73.65)
-  "estimated_minutes"   — realistic (window residential 60–180, gutter 90–240, high_rise 180–480)
-  "difficulty"          — 1–5
-  "required_skills"     — array from: rope_access, lift_operator, pressure_wash, ladder_cert, glass_restoration
-  "required_equipment"  — array from: rope_kit, ladder_28, ladder_32, pressure_washer, water_fed_pole, scissor_lift, van
-  "earliest_date"       — MUST be 2026-07-06 to 2026-07-10 (the planning week)
-  "latest_date"         — MUST be 2026-07-06 to 2026-07-10 (same week)
-  "price"               — realistic ($150–$2800)
+══════════════════════════════════════════════════════════════════
+TEST JOBS — define the jobs the scenario needs.
 
-CREW CAPABILITIES (do not assign jobs that no crew can handle):
-  crew_alpha  — skills: ladder_cert, pressure_wash  — equipment: pressure_washer, water_fed_pole, ladder_28, van
-  crew_bravo  — skills: ladder_cert, lift_operator, pressure_wash, glass_restoration  — equipment: pressure_washer, water_fed_pole, scissor_lift, ladder_28, ladder_32, van
-  crew_charlie — skills: rope_access, lift_operator, glass_restoration  — equipment: rope_kit, van
-  crew_delta  — skills: ladder_cert, pressure_wash  — equipment: pressure_washer, water_fed_pole, ladder_28, van
+  "id"               — short slug like "job_001", "job_002" (automatically prefixed qa_ in DB)
+  "service_type"     — window_cleaning | gutter_cleaning | pressure_washing | solar_panel_cleaning
+  "address"          — real West Island street address (geo agent will geocode lat/lng — do NOT include)
+  "estimated_minutes"— window residential 60–180 min, gutter 90–240 min, pressure wash 90–180 min
+  "difficulty"       — 1–5
+  "required_skills"  — from: ladder_cert, lift_operator, pressure_wash, glass_restoration
+  "required_equipment"— from: ladder_28, ladder_32, pressure_washer, water_fed_pole, scissor_lift, van
+  "earliest_date"    — must be 2026-07-06 to 2026-07-10
+  "latest_date"      — must be 2026-07-06 to 2026-07-10
+  "price"            — $100–$1500
 
-The reschedule step "job_id" MUST match one of the "id" values you define in test_jobs
-(the system prefixes qa_ so use the plain id). Use preferred_day as YYYY-MM-DD within 2026-07-06..2026-07-10.
+CREW CAPABILITIES:
+  crew_alpha — ladder_cert, pressure_wash → has: pressure_washer, water_fed_pole, ladder_28, van
+  crew_bravo — ladder_cert, lift_operator, pressure_wash, glass_restoration → has: pressure_washer, water_fed_pole, scissor_lift, ladder_28, ladder_32, van
+  crew_delta — ladder_cert, pressure_wash → has: pressure_washer, water_fed_pole, ladder_28, van
+  (crew_charlie does rope access — we don't use them)
 
-═══ VARIETY ═══════════════════════════════════════════════════════════════════
-Pick a category that is LEAST tested (you will be told coverage).
-Fingerprint MUST start with category letter: "C_rope_conflict" or "F_rain_monday".
-Categories:
-  A) geo_routing  B) crew_fill  C) equipment_conflict  D) skill_gap
-  E) date_window  F) rain_reschedule  G) multi_crew_balance  H) revenue_priority
+Only assign skills/equipment that at least one of alpha/bravo/delta can cover.
+Keep to 2–4 test jobs per scenario so the plan stays readable.
 
-═══ JSON SCHEMA ════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════
+STEPS — the actions the executor will run in order:
+  {"action": "plan", "scheduling_mode": "geo_first|crew_fill|balanced|revenue_priority"}
+  {"action": "reorganize", "instruction": "owner chat text"}
+  {"action": "reschedule", "job_id": "EXACT_ID_FROM_TEST_JOBS", "reason": "...", "preferred_day": "2026-07-08"}
+
+The reschedule job_id MUST match one of your test_jobs ids exactly.
+Use at most 2 steps — keep it focused.
+
+══════════════════════════════════════════════════════════════════
+JSON SCHEMA:
 {
-  "fingerprint": "LETTER_slug",
-  "category": "A|B|C|D|E|F|G|H",
-  "title": "...",
-  "persona_story": "...",
-  "test_jobs": [ { ...job fields... }, ... ],
-  "steps": [
-    {"action": "plan", "scheduling_mode": "geo_first|crew_fill|balanced|revenue_priority"},
-    {"action": "reorganize", "instruction": "owner chat text"},
-    {"action": "reschedule", "job_id": "EXACT_ID_FROM_TEST_JOBS", "reason": "...", "preferred_day": "2026-07-08"},
-    {"action": "plan_then_reschedule", "scheduling_mode": "...", "job_id": "EXACT_ID", "reason": "..."}
-  ],
-  "what_good_looks_like": "observable scheduling outcome"
+  "fingerprint": "theme_short_slug",
+  "theme": "rain_day | crew_fill | geo_routing | equipment_conflict | date_window | balanced_workload | revenue_priority",
+  "title": "one line",
+  "persona_story": "1-2 sentences as the owner",
+  "test_jobs": [ { "id": "job_001", "service_type": "...", "address": "...", ... } ],
+  "steps": [ ... ],
+  "what_good_looks_like": "specific observable outcome"
 }"""
 
 CRITIC_SYSTEM = """You are the same veteran window cleaning operator — brutally practical, not polite.
@@ -173,24 +179,26 @@ async def design_test_case(
     succeeded_fingerprints: list[str],
     failed_this_run: list[dict],
     case_index: int,
+    covered_themes: list[str] | None = None,
 ) -> Optional[dict]:
-    coverage = _category_coverage(succeeded_fingerprints, failed_this_run)
-    # Least-covered categories first (alphabetical tiebreak).
-    by_coverage = sorted(coverage.items(), key=lambda kv: (kv[1], kv[0]))
-    least_covered = [k for k, v in by_coverage[:3]]
-    saturated    = [k for k, v in coverage.items() if v >= 2]
+    covered = covered_themes or []
+
+    all_themes = [
+        "rain_day", "crew_fill", "geo_routing",
+        "equipment_conflict", "date_window",
+        "balanced_workload", "revenue_priority",
+    ]
+    uncovered = [t for t in all_themes if t not in covered]
+    next_theme = uncovered[0] if uncovered else "geo_routing"
 
     user = (
-        f"{PRODUCTION_MANAGER_VISION}\n\n"
-        f"Case index in this run: {case_index + 1}\n"
-        f"Already succeeded (DO NOT repeat these fingerprints): {json.dumps(succeeded_fingerprints)}\n"
-        f"Failed or retried this run: "
-        f"{json.dumps([f.get('fingerprint') for f in failed_this_run])}\n\n"
-        f"Category coverage so far: {json.dumps(coverage)}\n"
-        f"Saturated categories (2+ cases already — AVOID these): {saturated}\n"
-        f"Least-tested categories — PICK ONE OF THESE: {least_covered}\n\n"
-        "Design a scenario for one of the least-tested categories. "
-        "The fingerprint MUST start with the category letter (e.g. 'B_busy_monday')."
+        f"Case {case_index + 1}.\n\n"
+        f"Themes already covered (DO NOT repeat): {json.dumps(covered)}\n"
+        f"Themes not yet tested: {json.dumps(uncovered)}\n"
+        f"Design a scenario for theme: \"{next_theme}\"\n\n"
+        f"Fingerprints already in registry (avoid exact duplicates): {json.dumps(succeeded_fingerprints[:20])}\n"
+        f"Failed this run (avoid repeating): "
+        f"{json.dumps([f.get('fingerprint') for f in failed_this_run])}\n"
     )
     data, err = await _chat_json(CASE_DESIGNER_SYSTEM, user, max_tokens=1500)
     if err:

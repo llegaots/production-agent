@@ -18,7 +18,7 @@ from ..cursor_handoff import attach_handoff_to_report_json, trigger_automatic_ha
 from .executor import apply_owner_retry, execute_case
 from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
-from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case
+from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
 from .schedule_snapshot import plan_result_context
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -76,6 +76,7 @@ class AIQATeamRunner:
                 succeeded_fingerprints=succeeded_history + [c["fingerprint"] for c in case_results if c.get("passed")],
                 failed_this_run=failed_fingerprints,
                 case_index=case_idx,
+                covered_themes=themes_covered(),
             )
             if case and case.get("_error"):
                 llm_errors.append(str(case["_error"]))
@@ -166,6 +167,7 @@ class AIQATeamRunner:
                         title=case.get("title", fp),
                         run_id=self.audit.run_id,
                         viability_score=int(critique.get("viability_score") or 80),
+                        theme=case.get("theme", ""),
                     )
                     succeeded_history.append(fp)
                     break
