@@ -38,6 +38,112 @@ LOCATION_TYPE_SCORE = {
 
 GEOCODE_CONFIRM_THRESHOLD = 0.82
 
+# West Island municipalities — canonical coords used when Google returns wrong city.
+WEST_ISLAND_MUNICIPALITIES: dict[str, dict] = {
+    "pointe-claire": {
+        "aliases": ("pointe-claire", "pointe claire", "pointeclaire"),
+        "lat": 45.4460,
+        "lng": -73.8280,
+        "postal_fsa": frozenset({"H9R", "H9S", "H9X"}),
+    },
+    "beaconsfield": {
+        "aliases": ("beaconsfield",),
+        "lat": 45.4340,
+        "lng": -73.8620,
+        "postal_fsa": frozenset({"H9W", "H9H"}),
+    },
+    "kirkland": {
+        "aliases": ("kirkland",),
+        "lat": 45.4530,
+        "lng": -73.8700,
+        "postal_fsa": frozenset({"H9J", "H9H"}),
+    },
+    "dollard-des-ormeaux": {
+        "aliases": ("dollard-des-ormeaux", "dollard des ormeaux", "dollard"),
+        "lat": 45.4920,
+        "lng": -73.8230,
+        "postal_fsa": frozenset({"H9B", "H9G"}),
+    },
+    "dorval": {
+        "aliases": ("dorval",),
+        "lat": 45.4520,
+        "lng": -73.7450,
+        "postal_fsa": frozenset({"H9P", "H9S"}),
+    },
+    "pincourt": {
+        "aliases": ("pincourt",),
+        "lat": 45.3760,
+        "lng": -73.9850,
+        "postal_fsa": frozenset({"J7W", "J7V"}),
+    },
+    "vaudreuil-dorion": {
+        "aliases": ("vaudreuil-dorion", "vaudreuil", "vaudreuil dorion"),
+        "lat": 45.4010,
+        "lng": -74.0350,
+        "postal_fsa": frozenset({"J7V", "J7T"}),
+    },
+    "baie-d'urfe": {
+        "aliases": ("baie-d'urfe", "baie-d'urfé", "baie d'urfe", "baie d'urfé"),
+        "lat": 45.4580,
+        "lng": -73.9150,
+        "postal_fsa": frozenset({"H9X"}),
+    },
+    "ile-perrot": {
+        "aliases": ("ile-perrot", "île-perrot", "ile perrot", "notre-dame-de-l'ile-perrot"),
+        "lat": 45.3820,
+        "lng": -73.9380,
+        "postal_fsa": frozenset({"J7V", "J7W"}),
+    },
+}
+
+
+def _norm_municipality(name: str) -> str:
+    import unicodedata
+
+    s = unicodedata.normalize("NFKD", (name or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def extract_municipality_hint(address: str) -> Optional[str]:
+    """Return canonical municipality key if the address mentions a West Island city."""
+    lower = (address or "").lower()
+    for key, meta in WEST_ISLAND_MUNICIPALITIES.items():
+        for alias in meta["aliases"]:
+            if alias in lower:
+                return key
+    return None
+
+
+def municipality_centroid(hint: str) -> tuple[float, float] | None:
+    meta = WEST_ISLAND_MUNICIPALITIES.get(hint)
+    if not meta:
+        return None
+    return float(meta["lat"]), float(meta["lng"])
+
+
+def _locality_from_components(components: list[dict]) -> str:
+    for ctype in ("locality", "sublocality", "postal_town", "administrative_area_level_3"):
+        name = _extract_component(components, ctype)
+        if name:
+            return name
+    return ""
+
+
+def _municipality_matches(hint: str, locality: str, formatted: str) -> bool:
+    if not hint:
+        return True
+    norm_hint = _norm_municipality(hint)
+    norm_loc = _norm_municipality(locality)
+    norm_fmt = _norm_municipality(formatted)
+    if norm_hint and (norm_hint in norm_loc or norm_hint in norm_fmt):
+        return True
+    meta = WEST_ISLAND_MUNICIPALITIES.get(hint, {})
+    for alias in meta.get("aliases", ()):
+        na = _norm_municipality(alias)
+        if na and (na in norm_loc or na in norm_fmt):
+            return True
+    return False
+
 
 @dataclass
 class GeocodeResult:
@@ -85,17 +191,20 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 def _normalize_query(address: str) -> str:
-    """Turn partial inputs like '90 devon' into a Canada-biased geocode query."""
+    """Turn partial inputs into a Canada-biased geocode query, preserving explicit city."""
     t = re.sub(r"\s+", " ", (address or "").strip())
     if not t:
         return t
     lower = t.lower()
-    if "canada" not in lower and "qc" not in lower and "quebec" not in lower:
-        if re.search(r"\b[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d\b", t):
-            t = f"{t}, QC, Canada"
-        else:
-            t = f"{t}, West Island, Quebec, Canada"
-    return t
+    if "canada" in lower or "qc" in lower or "quebec" in lower:
+        return t
+    if re.search(r"\b[A-Za-z]\d[A-Za-z]\s*\d[A-Za-z]\d\b", t):
+        return f"{t}, QC, Canada"
+    hint = extract_municipality_hint(t)
+    if hint:
+        city = hint.replace("-", " ").title()
+        return f"{t}, {city}, QC, Canada"
+    return f"{t}, West Island, Quebec, Canada"
 
 
 def _extract_component(components: list[dict], ctype: str) -> str:
@@ -115,6 +224,7 @@ def score_google_result(
     result: dict,
     *,
     partial_match: bool = False,
+    expected_municipality: Optional[str] = None,
 ) -> GeocodeResult:
     """Score a single Geocoding API result."""
     issues: list[str] = []
@@ -130,6 +240,7 @@ def score_google_result(
     province = _extract_component(components, "administrative_area_level_1")
     postal = _extract_component(components, "postal_code")
     fsa = _postal_fsa(postal)
+    locality = _locality_from_components(components)
     types = set(result.get("types") or [])
 
     confidence = LOCATION_TYPE_SCORE.get(loc_type, 0.5)
@@ -137,6 +248,22 @@ def score_google_result(
     if partial_match:
         confidence -= 0.18
         issues.append("Google returned a partial match — verify street number and city.")
+
+    if expected_municipality and not _municipality_matches(expected_municipality, locality, formatted):
+        confidence -= 0.55
+        issues.append(
+            f"Geocoded city '{locality or formatted}' does not match expected "
+            f"'{expected_municipality}' from the input address."
+        )
+
+    if expected_municipality and fsa:
+        allowed_fsa = WEST_ISLAND_MUNICIPALITIES.get(expected_municipality, {}).get("postal_fsa")
+        if allowed_fsa and fsa not in allowed_fsa:
+            confidence -= 0.25
+            issues.append(
+                f"Postal {fsa} is unusual for {expected_municipality} "
+                f"(expected one of {sorted(allowed_fsa)})."
+            )
 
     if "street_address" in types or "premise" in types or "subpremise" in types:
         confidence += 0.06
@@ -206,6 +333,83 @@ def score_google_result(
     )
 
 
+def _pick_best_google_result(
+    raw: str,
+    results: list[dict],
+    *,
+    expected_municipality: Optional[str],
+) -> GeocodeResult:
+    """Score all Google candidates; prefer municipality match over raw confidence."""
+    pairs: list[tuple[dict, GeocodeResult]] = []
+    for item in results:
+        partial = bool(item.get("partial_match"))
+        scored = score_google_result(
+            raw,
+            item,
+            partial_match=partial,
+            expected_municipality=expected_municipality,
+        )
+        pairs.append((item, scored))
+
+    if expected_municipality:
+        matching = [
+            scored
+            for item, scored in pairs
+            if scored.success
+            and _municipality_matches(
+                expected_municipality,
+                _locality_from_components(item.get("address_components") or []),
+                scored.formatted_address,
+            )
+        ]
+        if matching:
+            return max(matching, key=lambda s: s.confidence)
+
+    if not pairs:
+        return GeocodeResult(
+            input_address=raw,
+            success=False,
+            needs_review=True,
+            issues=["No geocode results to score."],
+        )
+
+    best_item, best = max(pairs, key=lambda p: p[1].confidence)
+    if expected_municipality and best.success and not _municipality_matches(
+        expected_municipality,
+        _locality_from_components(best_item.get("address_components") or []),
+        best.formatted_address,
+    ):
+        return _municipality_centroid_result(raw, expected_municipality)
+    return best
+
+
+def _municipality_centroid_result(raw: str, hint: str) -> GeocodeResult:
+    coords = municipality_centroid(hint)
+    if not coords:
+        return GeocodeResult(
+            input_address=raw,
+            success=False,
+            needs_review=True,
+            issues=[f"No centroid for municipality '{hint}'."],
+        )
+    lat, lng = coords
+    city = hint.replace("-", " ").title()
+    return GeocodeResult(
+        input_address=raw,
+        success=True,
+        lat=lat,
+        lng=lng,
+        formatted_address=f"{raw} ({city} centroid — Google city mismatch)",
+        confidence=0.72,
+        needs_review=True,
+        in_service_area=True,
+        location_type="APPROXIMATE",
+        province="QC",
+        issues=[f"Used {city} centroid because Google returned a different municipality."],
+        source="municipality_centroid",
+    )
+
+
 class GoogleGeocoder:
     def __init__(self) -> None:
         self.api_key = os.getenv("GOOGLE_MAPS_API_KEY", "").strip() or os.getenv(
@@ -239,11 +443,17 @@ class GoogleGeocoder:
             )
 
         query = _normalize_query(raw)
+        expected = extract_municipality_hint(raw)
+        components = "country:CA|administrative_area:QC"
+        if expected:
+            city = expected.replace("-", " ").title()
+            components += f"|locality:{city}"
+
         params = {
             "address": query,
             "key": self.api_key,
             "region": "ca",
-            "components": "country:CA",
+            "components": components,
             # Bias results to West Island / Montreal west viewport
             "bounds": "45.30,-74.10|45.55,-73.60",
         }
@@ -266,6 +476,8 @@ class GoogleGeocoder:
         status = data.get("status")
         if status != "OK" or not data.get("results"):
             msg = data.get("error_message") or status or "ZERO_RESULTS"
+            if expected:
+                return _municipality_centroid_result(raw, expected)
             return GeocodeResult(
                 input_address=raw,
                 success=False,
@@ -275,13 +487,11 @@ class GoogleGeocoder:
                 source="google",
             )
 
-        best = data["results"][0]
-        partial = len(data["results"]) > 1 or "partial_match" in str(best.get("types", []))
-        # API sets partial_match on result object in some responses
-        if best.get("partial_match"):
-            partial = True
-
-        return score_google_result(raw, best, partial_match=partial)
+        return _pick_best_google_result(
+            raw,
+            data["results"],
+            expected_municipality=expected,
+        )
 
 
 geocoder = GoogleGeocoder()

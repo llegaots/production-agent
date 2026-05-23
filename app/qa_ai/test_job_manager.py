@@ -13,7 +13,7 @@ import json
 from datetime import date
 from typing import Any, Optional
 
-from ..geocode import geocoder
+from ..geocode import geocoder, extract_municipality_hint, municipality_centroid
 from ..models import EquipmentKind, Job, JobStatus, ServiceType, Skill
 from ..storage import store
 from ..supabase_client import supabase
@@ -95,27 +95,11 @@ def _parse_date(raw: Any, fallback: date) -> date:
         return fallback
 
 
-# West Island neighbourhood centroids for fallback when Google API unavailable in CI.
-_NEIGHBORHOOD_COORDS: list[tuple[str, float, float]] = [
-    ("pointe-claire", 45.4460, -73.8280),
-    ("beaconsfield", 45.4340, -73.8620),
-    ("kirkland", 45.4530, -73.8700),
-    ("dollard", 45.4920, -73.8230),
-    ("dorval", 45.4520, -73.7450),
-    ("pincourt", 45.3760, -73.9850),
-    ("vaudreuil", 45.4010, -74.0350),
-    ("baie-d'urfé", 45.4580, -73.9150),
-    ("baie-d'urfe", 45.4580, -73.9150),
-    ("ile-perrot", 45.3820, -73.9380),
-    ("île-perrot", 45.3820, -73.9380),
-]
-
-
+# West Island neighbourhood centroids — delegate to geocode module.
 def _neighborhood_fallback(address: str) -> tuple[float, float] | None:
-    lower = (address or "").lower()
-    for hint, lat, lng in _NEIGHBORHOOD_COORDS:
-        if hint in lower:
-            return lat, lng
+    hint = extract_municipality_hint(address)
+    if hint:
+        return municipality_centroid(hint)
     return None
 
 
