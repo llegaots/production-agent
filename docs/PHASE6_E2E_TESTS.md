@@ -48,3 +48,19 @@ bash scripts/e2e_apply_migrations.sh
 ```
 
 Orchestrator E2E still uses Supabase REST (`tools_db`) for the mission; Docker Postgres is for schema validation and future local-stack work.
+
+## Eval harness (quality over time)
+
+Repeated runs for regression tracking (not pass/fail):
+
+```bash
+python -m evals.run --scenario all --iterations 5
+python -m evals.run --scenario simple_week --iterations 3 --no-agent
+```
+
+Writes:
+
+- Markdown report: `evals/reports/{timestamp}.md` (summary table + per-trial detail)
+- Raw rows: Supabase `eval_runs` (apply migration `20250524170000_eval_runs.sql`)
+
+Metrics per scenario: approval rate within iteration cap, mean/variance of iterations, total drive minutes, and preference violations.

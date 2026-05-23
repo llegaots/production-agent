@@ -16,6 +16,9 @@ frontend/.env.local
 .vscode/
 .DS_Store
 
+# Eval reports (generated artifacts; raw rows live in eval_runs)
+evals/reports/*.md
+
 # Test / coverage
 .pytest_cache/
 .coverage
