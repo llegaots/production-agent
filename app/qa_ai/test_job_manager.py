@@ -93,6 +93,71 @@ def _parse_date(raw: Any, fallback: date) -> date:
         return fallback
 
 
+# ── Supabase reference sync ───────────────────────────────────────────────────
+
+async def ensure_supabase_reference_data() -> dict[str, int]:
+    """Upsert clients, crews, equipment from the in-memory store so QA job inserts satisfy FK constraints."""
+    if not supabase.enabled:
+        return {"clients": 0, "crews": 0, "equipment": 0}
+
+    counts = {"clients": 0, "crews": 0, "equipment": 0}
+    import logging
+    log = logging.getLogger(__name__)
+
+    for client in store.list_clients():
+        try:
+            await supabase.upsert(
+                "clients",
+                {
+                    "id": client.id,
+                    "name": client.name,
+                    "contact_email": client.contact_email or "",
+                    "contact_phone": client.contact_phone or "",
+                    "preferred_contact": client.preferred_contact or "email",
+                    "notes": client.notes or "",
+                },
+            )
+            counts["clients"] += 1
+        except Exception as exc:
+            log.warning("qa reference client upsert failed for %s: %s", client.id, exc)
+
+    for eq in store.list_equipment():
+        try:
+            await supabase.upsert(
+                "equipment",
+                {
+                    "id": eq.id,
+                    "kind": eq.kind.value,
+                    "label": eq.label,
+                    "quantity": eq.quantity,
+                },
+            )
+            counts["equipment"] += 1
+        except Exception as exc:
+            log.warning("qa reference equipment upsert failed for %s: %s", eq.id, exc)
+
+    for crew in store.list_crews():
+        try:
+            await supabase.upsert(
+                "crews",
+                {
+                    "id": crew.id,
+                    "name": crew.name,
+                    "members": crew.members,
+                    "skills": [s.value for s in crew.skills],
+                    "daily_minutes": crew.daily_minutes,
+                    "base_lat": crew.base_lat,
+                    "base_lng": crew.base_lng,
+                    "hourly_cost": crew.hourly_cost,
+                },
+            )
+            counts["crews"] += 1
+        except Exception as exc:
+            log.warning("qa reference crew upsert failed for %s: %s", crew.id, exc)
+
+    return counts
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 def build_test_job(job_def: dict, run_id: str, week_start: date) -> Optional[Job]:
@@ -153,6 +218,9 @@ async def insert_test_jobs(
     week_start: date,
 ) -> list[str]:
     """Build jobs from definitions, write to store + Supabase. Returns inserted IDs."""
+    if supabase.enabled:
+        await ensure_supabase_reference_data()
+
     inserted: list[str] = []
     for jd in job_defs:
         job = build_test_job(jd, run_id, week_start)
@@ -200,15 +268,24 @@ async def insert_test_jobs(
 
 
 async def delete_test_jobs(job_ids: list[str]) -> None:
-    """Remove QA test jobs from store and Supabase."""
+    """Remove QA test jobs from store and Supabase (including dependent rows)."""
+    qa_ids = [jid for jid in job_ids if jid.startswith("qa_")]
     for job_id in job_ids:
         store.jobs.pop(job_id, None)
 
-    if supabase.enabled and job_ids:
-        try:
-            # Delete by matching on the qa_ prefix to avoid accidents.
-            qa_ids = [jid for jid in job_ids if jid.startswith("qa_")]
-            if qa_ids:
-                await supabase.delete_where("jobs", "id", qa_ids)
-        except Exception:
-            pass
+    if not supabase.enabled or not qa_ids:
+        return
+
+    import logging
+    log = logging.getLogger(__name__)
+
+    try:
+        # Delete dependent rows first (FK constraints on jobs).
+        for table in ("scheduled_stops", "client_messages", "agent_events"):
+            try:
+                await supabase.delete_where(table, "job_id", qa_ids)
+            except Exception as exc:
+                log.warning("qa cleanup %s delete failed: %s", table, exc)
+        await supabase.delete_where("jobs", "id", qa_ids)
+    except Exception as exc:
+        log.warning("qa test_job supabase delete failed: %s", exc)

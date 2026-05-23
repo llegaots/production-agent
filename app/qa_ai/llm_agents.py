@@ -213,11 +213,25 @@ async def critique_schedule(
     iteration: int,
     prior_critique: Optional[dict] = None,
 ) -> Optional[dict]:
+    test_jobs = case.get("test_jobs") or []
+    id_map = {
+        str(j.get("id") or j.get("job_id")): (
+            j.get("id") if str(j.get("id", "")).startswith("qa_")
+            else f"qa_{j.get('id') or j.get('job_id')}"
+        )
+        for j in test_jobs
+        if j.get("id") or j.get("job_id")
+    }
     user = (
         f"Test case: {json.dumps(case, default=str)}\n"
         f"Iteration: {iteration}\n"
-        f"Schedule under review:\n{json.dumps(schedule_context, default=str, indent=2)}\n"
     )
+    if id_map:
+        user += (
+            f"Job ID mapping (designer id → persisted id in schedule): "
+            f"{json.dumps(id_map)}\n"
+        )
+    user += f"Schedule under review:\n{json.dumps(schedule_context, default=str, indent=2)}\n"
     if prior_critique:
         user += f"\nPrior critique (you may soften if replan fixed issues):\n{json.dumps(prior_critique, default=str)}\n"
     data, err = await _chat_json(CRITIC_SYSTEM, user, max_tokens=1400)

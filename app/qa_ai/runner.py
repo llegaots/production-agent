@@ -20,6 +20,7 @@ from .llm_agents import critique_schedule, design_test_case, synthesize_run
 from .probe import probe_llm_for_qa
 from .registry import fingerprints_for_prompt, load_succeeded_cases, save_succeeded_case, themes_covered
 from .schedule_snapshot import plan_result_context
+from .test_job_manager import delete_test_jobs
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -108,6 +109,7 @@ class AIQATeamRunner:
             }
 
             prior_critique: Optional[dict] = None
+            pending_cleanup: list[str] = []
             for iteration in range(1, _max_iterations() + 1):
                 self.audit.log(
                     "Executor",
@@ -132,6 +134,8 @@ class AIQATeamRunner:
                     iteration=iteration,
                     prior_critique=prior_critique,
                 )
+                if exec_result.inserted_job_ids:
+                    pending_cleanup = exec_result.inserted_job_ids
                 if not critique:
                     critique = {
                         "verdict": "fail",
@@ -176,6 +180,15 @@ class AIQATeamRunner:
                     break
                 if iteration >= _max_iterations():
                     case_record["final_critique"] = critique
+
+            if pending_cleanup:
+                await delete_test_jobs(pending_cleanup)
+                self.audit.log(
+                    "Executor",
+                    "cleanup",
+                    f"Removed {len(pending_cleanup)} QA test jobs from store + Supabase",
+                    detail={"ids": pending_cleanup},
+                )
 
             if not case_record["passed"]:
                 failed_fingerprints.append({"fingerprint": fp, "title": case.get("title")})

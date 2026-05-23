@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from ..agents import ReschedulerAgent, SupervisorAgent
 from ..agents.supervisor import _next_monday
-from ..models import PlanResult
+from ..models import Job, PlanResult
 from ..reorganize import parse_reorganize_instruction
 from ..scheduling_prefs import SchedulingMode, parse_mode
 from ..seed import seed, SEED_WEEK_START
@@ -15,7 +15,6 @@ from ..supabase_store import persist_plan
 from .schedule_snapshot import plan_result_context
 from .test_job_manager import delete_test_jobs, insert_test_jobs
 
-
 class CaseExecutionResult:
     def __init__(self) -> None:
         self.plan_results: list[PlanResult] = []
@@ -23,6 +22,8 @@ class CaseExecutionResult:
         self.final_plan: Optional[PlanResult] = None
         self.scheduling_mode: Optional[str] = None
         self.owner_instructions: list[str] = []
+        self.inserted_job_ids: list[str] = []
+        self.job_lookup: dict[str, Job] = {}
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,8 +32,10 @@ class CaseExecutionResult:
                 self.final_plan,
                 scheduling_mode=self.scheduling_mode,
                 owner_instruction=" | ".join(self.owner_instructions) or None,
+                job_lookup=self.job_lookup or None,
             ),
             "steps_executed": self.events,
+            "inserted_job_ids": self.inserted_job_ids,
         }
 
 
@@ -45,6 +48,8 @@ async def execute_case(
 ) -> CaseExecutionResult:
     ws = week_start or SEED_WEEK_START
     out = CaseExecutionResult()
+    inserted_job_ids: list[str] = []
+    seed_job_backup: dict[str, Job] = {}
 
     # Always reset to a clean known state before each case.
     seed(reset=True)
@@ -97,17 +102,31 @@ async def execute_case(
         # If the case designer provided custom test jobs, insert them into the
         # store AND Supabase so the scheduler sees them as real persisted jobs.
         test_job_defs = case.get("test_jobs") or []
-        inserted_job_ids: list[str] = []
         if test_job_defs:
             inserted_job_ids = await insert_test_jobs(test_job_defs, run_id, ws)
+            out.inserted_job_ids = inserted_job_ids
             out.events.append({
                 "step": -1,
                 "action": "test_jobs_inserted",
                 "count": len(inserted_job_ids),
                 "ids": inserted_job_ids,
             })
+
+            # Focus the scenario: hide seed jobs so the planner only sees the
+            # test jobs the case designer defined (avoids noise from 27+ seed jobs).
+            for jid, job in list(store.jobs.items()):
+                if not jid.startswith("qa_"):
+                    seed_job_backup[jid] = job
+                    del store.jobs[jid]
+
+            # Cache job objects for schedule snapshot (survives later cleanup).
+            for jid in inserted_job_ids:
+                job = store.get_job(jid)
+                if job:
+                    out.job_lookup[jid] = job
     except Exception:
         inserted_job_ids = []
+        out.inserted_job_ids = []
 
     steps = case.get("steps") or []
     plan: Optional[PlanResult] = store.get_plan()
@@ -219,11 +238,11 @@ async def execute_case(
         # Always restore, even if an exception fires mid-execution.
         _llm.chat = _original_chat
         _geocoder.geocode = _original_geocode
+        # Restore seed jobs removed for focused test scenarios.
+        for jid, job in seed_job_backup.items():
+            store.jobs[jid] = job
 
-    # Clean up test jobs from store and Supabase after the case completes.
-    if inserted_job_ids:
-        await delete_test_jobs(inserted_job_ids)
-
+    # Test jobs are cleaned up by the runner AFTER the critic snapshot is built.
     return out
 
 

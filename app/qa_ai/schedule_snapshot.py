@@ -35,16 +35,22 @@ def plan_to_operator_context(
     scheduling_mode: Optional[str] = None,
     owner_instruction: Optional[str] = None,
     extra: Optional[dict] = None,
+    job_lookup: Optional[dict[str, Job]] = None,
 ) -> dict[str, Any]:
     """Serialize a week plan the way an ops manager scans it."""
     crews_by_id = {c.id: c for c in store.list_crews()}
     crew_days: list[dict] = []
 
+    def _resolve_job(job_id: str) -> Optional[Job]:
+        if job_lookup and job_id in job_lookup:
+            return job_lookup[job_id]
+        return store.get_job(job_id)
+
     for cd in sorted(plan.days, key=lambda x: (x.day, x.crew_id)):
         crew = crews_by_id.get(cd.crew_id)
         stops = []
         for s in sorted(cd.stops, key=lambda x: x.order):
-            job = store.get_job(s.job_id)
+            job = _resolve_job(s.job_id)
             stops.append(
                 {
                     **_job_row(job),
@@ -70,7 +76,7 @@ def plan_to_operator_context(
             }
         )
 
-    unscheduled = [_job_row(store.get_job(jid)) for jid in plan.unscheduled_job_ids]
+    unscheduled = [_job_row(_resolve_job(jid)) for jid in plan.unscheduled_job_ids]
 
     return {
         "week_start": plan.week_start.isoformat(),
@@ -92,11 +98,13 @@ def plan_to_operator_context(
 
 def plan_result_context(
     result: Optional[PlanResult],
+    *,
+    job_lookup: Optional[dict[str, Job]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     if not result:
         return {"error": "no_plan"}
-    return plan_to_operator_context(result.plan, **kwargs)
+    return plan_to_operator_context(result.plan, job_lookup=job_lookup, **kwargs)
 
 
 def _minute_label(mins: int, shift_start: int = 8 * 60) -> str:
