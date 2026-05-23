@@ -91,6 +91,8 @@ class Job(BaseModel):
     price: Decimal = Decimal("0")
     status: JobStatus = "pending"
     notes: str = ""
+    recurrence_rule: str = ""
+    preferred_day_of_week: int | None = Field(default=None, ge=0, le=6)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
