@@ -70,7 +70,9 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         mode = SchedulingMode.CREW_FILL
     elif re.search(r"minimize\s*drive|geo\s*first|location\s*first|proximity", lower):
         mode = SchedulingMode.GEO_FIRST
-    elif re.search(r"balanced|balance", lower):
+    elif re.search(r"balanced|balance|level\s*out|load.?level|spread\s*(?:the\s*)?work|"
+                   r"even\s*out|overload|under.?load|(?:crew|truck)s?\s*idle|"
+                   r"distribute|workload|burn\s*out|level\s*(?:this|the)\s*out", lower):
         mode = SchedulingMode.BALANCED
     elif re.search(r"revenue|priority|high.value|urgent.job", lower):
         mode = SchedulingMode.REVENUE_PRIORITY

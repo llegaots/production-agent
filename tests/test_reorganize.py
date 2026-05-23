@@ -47,3 +47,11 @@ def test_parse_reorganize_normal_instruction_not_emergency():
     intent = parse_reorganize_instruction("Please balance the workload this week", ws)
     assert intent.scheduling_mode == SchedulingMode.BALANCED
     assert intent.target_day is None
+
+
+def test_parse_reorganize_level_out_load():
+    ws = date(2025, 5, 19)
+    intent = parse_reorganize_instruction(
+        "Level this out — Alpha is overloaded Tuesday while Delta sits idle", ws
+    )
+    assert intent.scheduling_mode == SchedulingMode.BALANCED

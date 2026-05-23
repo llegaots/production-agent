@@ -17,9 +17,13 @@ from __future__ import annotations
 from datetime import date
 
 from ..models import Crew, EquipmentKind, Job
-from ..scheduling_prefs import SchedulingMode, cluster_sort_key, placement_score_bonus
+from ..scheduling_prefs import SchedulingMode, cluster_sort_key, load_balance_bonus, placement_score_bonus
 from ..storage import store
 from .base import Agent, AgentContext, haversine_km, week_days
+
+
+def _fleet_quantity(kind: EquipmentKind) -> int:
+    return sum(eq.quantity for eq in store.list_equipment() if eq.kind == kind)
 
 
 class CrewMatchAgent(Agent):
@@ -67,6 +71,150 @@ class CrewMatchAgent(Agent):
             cur_lat, cur_lng = nxt.lat, nxt.lng
             remaining.remove(nxt)
         return ordered
+
+    @staticmethod
+    def _crews_active_on_day(
+        slots: dict[tuple[str, date], list[str] | int],
+        day: date,
+        crew_equipment_kinds: dict[str, set[EquipmentKind]],
+        *,
+        kind: EquipmentKind | None = None,
+    ) -> int:
+        """Count crews with work (or reserved minutes) on ``day``."""
+        seen: set[str] = set()
+        for (crew_id, d), val in slots.items():
+            if d != day:
+                continue
+            active = (isinstance(val, int) and val > 0) or (isinstance(val, list) and val)
+            if not active:
+                continue
+            if kind is None or kind in crew_equipment_kinds.get(crew_id, set()):
+                seen.add(crew_id)
+        return len(seen)
+
+    @classmethod
+    def _fleet_blocks_new_crew_on_day(
+        cls,
+        slots: dict[tuple[str, date], list[str] | int],
+        crew_id: str,
+        day: date,
+        crew_equipment_kinds: dict[str, set[EquipmentKind]],
+    ) -> bool:
+        """True when turning on ``crew_id`` on ``day`` would exceed fleet equipment."""
+        already = (
+            (isinstance(slots.get((crew_id, day)), int) and slots.get((crew_id, day), 0) > 0)
+            or bool(slots.get((crew_id, day)))
+        )
+        if already:
+            return False
+        for eq_kind in crew_equipment_kinds.get(crew_id, set()):
+            fleet = _fleet_quantity(eq_kind)
+            in_use = cls._crews_active_on_day(slots, day, crew_equipment_kinds, kind=eq_kind)
+            if in_use >= fleet:
+                return True
+        return False
+
+    def _rebalance_balanced_draft(
+        self,
+        ctx: AgentContext,
+        merged: dict[tuple[str, date], list[str]],
+        jobs_by_id: dict[str, Job],
+        crew_equipment_kinds: dict[str, set[EquipmentKind]],
+        *,
+        max_spread_minutes: int = 150,
+    ) -> dict[tuple[str, date], list[str]]:
+        """Move jobs from overloaded crew-days to underloaded ones (BALANCED mode)."""
+        crews_by_id = {c.id: c for c in ctx.crews}
+        crew_ids = [c.id for c in ctx.crews]
+        days = week_days(ctx.week_start)
+        out = {k: list(v) for k, v in merged.items()}
+        before_count = sum(len(v) for v in out.values())
+
+        def work_minutes(crew_id: str, day: date) -> int:
+            return sum(
+                jobs_by_id[jid].estimated_minutes
+                for jid in out.get((crew_id, day), [])
+                if jid in jobs_by_id
+            )
+
+        def can_host(job: Job, crew_id: str, day: date) -> bool:
+            crew = crews_by_id[crew_id]
+            if day < job.earliest_date or day > job.latest_date:
+                return False
+            if not self._crew_covers_skills(crew, [job]):
+                return False
+            if not self._crew_covers_equipment(crew, [job], crew_equipment_kinds):
+                return False
+            if self._fleet_blocks_new_crew_on_day(out, crew_id, day, crew_equipment_kinds):
+                return False
+            load = work_minutes(crew_id, day) + job.estimated_minutes + 30
+            return load <= crew.daily_minutes
+
+        def remove_job(src_key: tuple[str, date], jid: str) -> None:
+            current = list(out.get(src_key, []))
+            if jid not in current:
+                return
+            out[src_key] = [j for j in current if j != jid]
+            if not out[src_key]:
+                del out[src_key]
+
+        def add_job(tgt_key: tuple[str, date], jid: str) -> None:
+            out.setdefault(tgt_key, []).append(jid)
+
+        max_iters = max(1, len(jobs_by_id) * len(days) * len(crew_ids))
+        for _ in range(max_iters):
+            improved = False
+            for day in days:
+                loads = {cid: work_minutes(cid, day) for cid in crew_ids}
+                if max(loads.values()) - min(loads.values()) <= max_spread_minutes:
+                    continue
+                overloaded = max(crew_ids, key=lambda cid: loads[cid])
+                src_key = (overloaded, day)
+                src_jobs = list(out.get(src_key, []))
+                if not src_jobs:
+                    continue
+                for jid in sorted(
+                    src_jobs,
+                    key=lambda j: jobs_by_id[j].estimated_minutes if j in jobs_by_id else 0,
+                ):
+                    job = jobs_by_id.get(jid)
+                    if not job:
+                        continue
+                    # Same-day cross-crew move (preferred).
+                    same_day_targets = [
+                        cid
+                        for cid in crew_ids
+                        if cid != overloaded and can_host(job, cid, day)
+                    ]
+                    if same_day_targets:
+                        target = min(same_day_targets, key=lambda cid: loads[cid])
+                        remove_job(src_key, jid)
+                        add_job((target, day), jid)
+                        improved = True
+                        break
+                    # Cross-day: same crew or different crew with slack.
+                    alt_targets: list[tuple[int, str, date]] = []
+                    for cid in crew_ids:
+                        for alt_day in days:
+                            if alt_day == day and cid == overloaded:
+                                continue
+                            if not can_host(job, cid, alt_day):
+                                continue
+                            alt_targets.append((work_minutes(cid, alt_day), cid, alt_day))
+                    if not alt_targets:
+                        continue
+                    _, target_crew, target_day = min(alt_targets)
+                    remove_job(src_key, jid)
+                    add_job((target_crew, target_day), jid)
+                    improved = True
+                    break
+            if not improved:
+                break
+
+        after_count = sum(len(v) for v in out.values())
+        if after_count != before_count:
+            return merged
+        return out
 
     async def run(self, ctx: AgentContext) -> None:
         clusters: list[dict] = ctx.blackboard.get("geo_clusters", [])
@@ -146,8 +294,15 @@ class CrewMatchAgent(Agent):
                     used_min = used.get((crew.id, day), 0)
                     if used_min + total + drive_budget > crew.daily_minutes:
                         continue
+                    if self._fleet_blocks_new_crew_on_day(used, crew.id, day, crew_equipment_kinds):
+                        continue
                     remaining = crew.daily_minutes - used_min
-                    score = fit + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
+                    day_loads = [used.get((c.id, day), 0) for c in eligible]
+                    score = (
+                        fit
+                        + placement_score_bonus(mode, remaining, crew_drive or avg_drive_km)
+                        + load_balance_bonus(mode, used_min, day_loads)
+                    )
                     candidates.append((score, crew, day))
 
             if not candidates:
@@ -212,6 +367,16 @@ class CrewMatchAgent(Agent):
         for entry in draft_plan:
             key = (entry["crew_id"], entry["day"])
             merged.setdefault(key, []).extend(entry["job_ids"])
+
+        if mode == SchedulingMode.BALANCED and merged:
+            merged = self._rebalance_balanced_draft(
+                ctx, merged, jobs_by_id, crew_equipment_kinds
+            )
+            await ctx.emit(
+                self.name,
+                "rebalance",
+                "Applied cross-crew load balancing for BALANCED mode.",
+            )
 
         # Safety invariant: every job in ctx.jobs must appear in either the
         # draft plan or the unscheduled list.  Jobs that are silently dropped

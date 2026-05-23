@@ -97,6 +97,15 @@ def placement_score_bonus(mode: SchedulingMode, remaining_minutes: int, drive_km
     return 0.003 * remaining_minutes - 0.2 * drive_km
 
 
+def load_balance_bonus(mode: SchedulingMode, crew_used_min: int, eligible_day_loads: list[int]) -> float:
+    """Prefer underloaded crews on the same day (BALANCED mode only)."""
+    if mode != SchedulingMode.BALANCED or not eligible_day_loads:
+        return 0.0
+    avg = sum(eligible_day_loads) / len(eligible_day_loads)
+    # Strong enough to overcome moderate drive-distance bias when one crew is stacked.
+    return 0.045 * (avg - crew_used_min)
+
+
 # ── Cluster target cap ────────────────────────────────────────────────────────
 #
 # Controls how many geo-clusters GeoClusterAgent tries to produce.
