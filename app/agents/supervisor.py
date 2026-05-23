@@ -72,6 +72,7 @@ class SupervisorAgent(Agent):
         week_start: Optional[date] = None,
         emitter: Optional[EventEmitter] = None,
         scheduling_mode: Optional[SchedulingMode | str] = None,
+        hard_constraints: Optional[list] = None,
     ) -> PlanResult:
         ws = week_start or _next_monday()
         week_end = week_days(ws)[-1]   # last working day of the 5-day window
@@ -102,6 +103,8 @@ class SupervisorAgent(Agent):
             week_start=ws, crews=crews, jobs=jobs, scheduling_mode=mode, emitter=emitter
         )
         ctx.blackboard["scheduling_mode"] = mode
+        if hard_constraints:
+            ctx.blackboard["hard_constraints"] = hard_constraints
 
         await ctx.emit(
             "System",
@@ -146,6 +149,10 @@ class SupervisorAgent(Agent):
         # equipment conflicts from crew_days so no crew is asked to operate
         # without its required equipment.
         await self._evict_equipment_conflicts(ctx)
+
+        # Post Phase 2: consolidate under-utilised crew-days (<40%) where
+        # same-zone jobs on earlier days exist and can absorb them.
+        await self._consolidate_underutilized(ctx)
 
         # Phase 3 - comms pipeline (router -> draft -> guardrail || critic -> redraft).
         await self.comms.run(ctx)
@@ -243,6 +250,192 @@ class SupervisorAgent(Agent):
             f"Evicted {len(bumped_job_ids)} job(s) with unresolvable equipment conflicts "
             f"to unscheduled: {', '.join(sorted(bumped_job_ids))}.",
         )
+
+    @staticmethod
+    def _resequence_crew_day(crew_day: CrewDay, job_ids: list[str], jobs_by_id: dict, crew) -> None:
+        """Recompute stop timing for a crew_day with the given ordered job_ids."""
+        from ..models import ScheduledStop
+        from .base import haversine_km, drive_minutes
+
+        stops = []
+        cur_lat, cur_lng = crew.base_lat, crew.base_lng
+        minute_cursor = 0
+        total_drive = 0
+        total_work = 0
+
+        for idx, jid in enumerate(job_ids):
+            job = jobs_by_id.get(jid)
+            if not job:
+                continue
+            d_km = haversine_km(cur_lat, cur_lng, job.lat, job.lng)
+            travel = drive_minutes(d_km)
+            minute_cursor += travel
+            total_drive += travel
+            stops.append(
+                ScheduledStop(
+                    job_id=job.id,
+                    order=idx,
+                    start_minute=minute_cursor,
+                    travel_minutes_before=travel,
+                    duration_minutes=job.estimated_minutes,
+                )
+            )
+            minute_cursor += job.estimated_minutes
+            total_work += job.estimated_minutes
+            cur_lat, cur_lng = job.lat, job.lng
+
+        return_km = haversine_km(cur_lat, cur_lng, crew.base_lat, crew.base_lng)
+        return_drive = drive_minutes(return_km)
+        total_drive += return_drive
+
+        day_load = minute_cursor + return_drive
+        crew_day.stops = stops
+        crew_day.total_work_minutes = total_work
+        crew_day.total_drive_minutes = total_drive
+        crew_day.utilization = round(min(1.0, day_load / max(1, crew.daily_minutes)), 2)
+        crew_day.overbooked = day_load > crew.daily_minutes
+
+    async def _consolidate_underutilized(self, ctx: AgentContext) -> None:
+        """Merge under-utilised crew-days (<40%) into earlier same-zone days.
+
+        For each crew-day below the 40% threshold, check if all its jobs are
+        geographically close (within 5 km) to jobs on an earlier day of the
+        same week.  When a suitable earlier day exists with enough remaining
+        capacity, move the jobs there and remove the thin crew-day.
+
+        Hard constraints are respected: jobs that appear in the hard_constraints
+        blackboard are never moved by this pass.
+        """
+        from .base import haversine_km, drive_minutes
+
+        crew_days: list[CrewDay] = ctx.blackboard.get("crew_days", [])
+        if not crew_days:
+            return
+
+        jobs_by_id = {j.id: j for j in ctx.jobs}
+        crews_by_id = {c.id: c for c in ctx.crews}
+
+        # Build set of job IDs locked by hard constraints.
+        locked_ids: set[str] = set()
+        for hc in ctx.blackboard.get("hard_constraints", []):
+            locked_ids.update(hc.job_ids)
+
+        UTIL_THRESHOLD = 0.40
+        GEO_PROXIMITY_KM = 5.0
+
+        # Sort crew_days by (day, crew) so earlier days come first.
+        sorted_days = sorted(crew_days, key=lambda cd: (cd.day, cd.crew_id))
+
+        removed: set[int] = set()  # indices into sorted_days to remove
+
+        for i, thin_cd in enumerate(sorted_days):
+            if i in removed:
+                continue
+            if thin_cd.utilization >= UTIL_THRESHOLD:
+                continue
+            # Skip if any job in this crew-day is locked.
+            thin_job_ids = [s.job_id for s in thin_cd.stops]
+            if any(jid in locked_ids for jid in thin_job_ids):
+                continue
+            if not thin_job_ids:
+                continue
+
+            thin_jobs = [jobs_by_id[jid] for jid in thin_job_ids if jid in jobs_by_id]
+            if not thin_jobs:
+                continue
+
+            thin_crew = crews_by_id.get(thin_cd.crew_id)
+            if not thin_crew:
+                continue
+
+            # Look for an earlier crew-day (any crew) that:
+            #   (a) precedes this day in the week
+            #   (b) has enough remaining capacity for these jobs + drive overhead
+            #   (c) already has jobs geographically close to all thin-day jobs
+            for j, early_cd in enumerate(sorted_days):
+                if j in removed or j == i:
+                    continue
+                if early_cd.day >= thin_cd.day:
+                    continue  # must be an earlier day
+
+                early_crew = crews_by_id.get(early_cd.crew_id)
+                if not early_crew:
+                    continue
+
+                early_job_ids = [s.job_id for s in early_cd.stops]
+                early_jobs = [jobs_by_id[jid] for jid in early_job_ids if jid in jobs_by_id]
+                if not early_jobs:
+                    continue
+
+                # Check if all thin-day jobs are within geo_proximity of early-day centroid.
+                early_lat = sum(j2.lat for j2 in early_jobs) / len(early_jobs)
+                early_lng = sum(j2.lng for j2 in early_jobs) / len(early_jobs)
+                if any(
+                    haversine_km(early_lat, early_lng, tj.lat, tj.lng) > GEO_PROXIMITY_KM
+                    for tj in thin_jobs
+                ):
+                    continue  # not in the same zone
+
+                # Check capacity: early day must fit the additional work + rough drive.
+                extra_work = sum(tj.estimated_minutes for tj in thin_jobs)
+                drive_overhead = 15 * len(thin_jobs)
+                current_load = early_cd.total_work_minutes + early_cd.total_drive_minutes
+                if current_load + extra_work + drive_overhead > early_crew.daily_minutes:
+                    continue  # would overbook
+
+                # Check date windows for all thin jobs on the early day.
+                if any(
+                    tj.earliest_date > early_cd.day or tj.latest_date < early_cd.day
+                    for tj in thin_jobs
+                ):
+                    continue
+
+                # Verify the early crew has all required skills and equipment
+                # for the jobs being moved.
+                from ..storage import store as _store
+                early_skills = set(early_crew.skills)
+                early_equip: set = set()
+                for eid in early_crew.equipment_ids:
+                    eq = _store.get_equipment(eid)
+                    if eq:
+                        early_equip.add(eq.kind)
+                required_skills = {s for tj in thin_jobs for s in tj.required_skills}
+                required_equip = {e for tj in thin_jobs for e in tj.required_equipment}
+                if not required_skills.issubset(early_skills):
+                    continue
+                if not required_equip.issubset(early_equip):
+                    continue
+
+                # Consolidate: move stops from thin_cd to early_cd.
+                # Append and renumber stops, then recalculate all timing so
+                # no start_minute overlaps occur.
+                combined_job_ids = [s.job_id for s in early_cd.stops] + [
+                    s.job_id for s in thin_cd.stops
+                ]
+                self._resequence_crew_day(early_cd, combined_job_ids, jobs_by_id, early_crew)
+
+                removed.add(i)
+                await ctx.emit(
+                    self.name,
+                    "consolidate",
+                    f"Consolidated under-utilised {thin_cd.crew_id} {thin_cd.day.isoformat()} "
+                    f"({int(thin_cd.utilization * 100)}% util) into "
+                    f"{early_cd.crew_id} {early_cd.day.isoformat()} — "
+                    f"same-zone jobs, {len(thin_jobs)} stop(s) moved.",
+                    detail={
+                        "from_crew_id": thin_cd.crew_id,
+                        "from_day": thin_cd.day.isoformat(),
+                        "to_crew_id": early_cd.crew_id,
+                        "to_day": early_cd.day.isoformat(),
+                        "moved_job_ids": thin_job_ids,
+                    },
+                )
+                break  # one consolidation target per thin day
+
+        if removed:
+            ctx.blackboard["crew_days"] = [
+                cd for k, cd in enumerate(sorted_days) if k not in removed
+            ]
 
     async def _summarize(
         self,

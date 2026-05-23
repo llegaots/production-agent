@@ -10,6 +10,16 @@ from .scheduling_prefs import SchedulingMode, parse_mode
 
 
 @dataclass
+class HardConstraint:
+    """An immutable crew+day+jobs assignment extracted from owner instruction."""
+
+    crew_name: str           # e.g. "Alpha", "Delta"
+    day_name: str            # e.g. "Monday", "Tuesday"
+    job_ids: list[str]       # normalized job IDs, e.g. ["qa_job_001", "qa_job_002"]
+    start_time: Optional[str] = None  # e.g. "08:00" if specified
+
+
+@dataclass
 class ReorganizeIntent:
     instruction: str
     scheduling_mode: SchedulingMode
@@ -18,6 +28,7 @@ class ReorganizeIntent:
     reason: str = "Owner requested schedule change via chat"
     is_emergency: bool = False
     emergency_keywords: list[str] = field(default_factory=list)
+    hard_constraints: list[HardConstraint] = field(default_factory=list)
 
 
 _JOB_RE = re.compile(r"\b(job_[\w-]+)\b", re.I)
@@ -29,6 +40,48 @@ _MODE_RE = re.compile(
     r"minimize\s*drive|location\s*first|proximity|balanced|balance|revenue|priority)",
     re.I,
 )
+
+# Matches "Crew <Name> <Day> [HH:MM]: job_id1, job_id2, ..."
+# Also handles "HARD OVERRIDE:" prefix before the pattern.
+# Group 1: crew name token (e.g. "Alpha", "Delta")
+# Group 2: day name (e.g. "Monday")
+# Group 3: optional time (e.g. "08:00")
+# Group 4: comma-separated job IDs
+_HARD_CONSTRAINT_RE = re.compile(
+    r"Crew\s+(\w+)\s+"
+    r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
+    r"(?:\s+(\d{1,2}:\d{2}))?"
+    r"\s*[:\-–]\s*"
+    r"((?:(?:qa_job_|qa_|job_)\w+)(?:\s*,\s*(?:(?:qa_job_|qa_|job_)\w+))*)",
+    re.IGNORECASE,
+)
+
+# Normalise a raw job-id token to a consistent lowercase form.
+_JOB_ID_NORM_RE = re.compile(r"\b((?:qa_job_|job_)[\w-]+)\b", re.I)
+
+
+def _parse_hard_constraints(text: str) -> list[HardConstraint]:
+    """Extract explicit crew+day+jobs assignments from owner instruction text."""
+    constraints: list[HardConstraint] = []
+    for m in _HARD_CONSTRAINT_RE.finditer(text):
+        crew_name = m.group(1)
+        day_name = m.group(2).capitalize()
+        start_time = m.group(3)  # may be None
+        raw_jobs = m.group(4)
+        job_ids = [
+            jid.lower().replace("qa-job-", "qa_job_").replace("job-", "job_")
+            for jid in _JOB_ID_NORM_RE.findall(raw_jobs)
+        ]
+        if job_ids:
+            constraints.append(
+                HardConstraint(
+                    crew_name=crew_name,
+                    day_name=day_name,
+                    job_ids=job_ids,
+                    start_time=start_time,
+                )
+            )
+    return constraints
 
 # Emergency patterns — any match escalates to CREW_FILL and first available slot.
 _EMERGENCY_PATTERNS = re.compile(
@@ -99,6 +152,8 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         kw_str = ", ".join(dict.fromkeys(k.strip() for k in emergency_matches))
         reason = f"EMERGENCY ({kw_str}): {reason}"
 
+    hard_constraints = _parse_hard_constraints(text)
+
     return ReorganizeIntent(
         instruction=text,
         scheduling_mode=mode,
@@ -107,4 +162,5 @@ def parse_reorganize_instruction(text: str, week_start: date) -> ReorganizeInten
         reason=reason,
         is_emergency=is_emergency,
         emergency_keywords=list(dict.fromkeys(k.strip() for k in emergency_matches)),
+        hard_constraints=hard_constraints,
     )

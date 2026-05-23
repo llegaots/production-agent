@@ -99,6 +99,58 @@ class CrewMatchAgent(Agent):
         draft_plan: list[dict] = []
         unscheduled: list[str] = []
 
+        # ── Hard-constraint pre-assignment ────────────────────────────────────
+        # When the owner instruction explicitly assigns jobs to specific crews on
+        # specific days, honour those as immutable before the optimisation pass.
+        constrained_job_ids: set[str] = set()
+        raw_constraints = ctx.blackboard.get("hard_constraints", [])
+        day_by_name: dict[str, date] = {d.strftime("%A").lower(): d for d in days}
+
+        for hc in raw_constraints:
+            # Resolve crew (case-insensitive partial match on crew name)
+            crew = next(
+                (c for c in ctx.crews if hc.crew_name.lower() in c.name.lower()),
+                None,
+            )
+            if crew is None:
+                await ctx.emit(
+                    self.name,
+                    "warn",
+                    f"Hard constraint: crew name '{hc.crew_name}' not found — skipping.",
+                )
+                continue
+
+            day = day_by_name.get(hc.day_name.lower())
+            if day is None:
+                await ctx.emit(
+                    self.name,
+                    "warn",
+                    f"Hard constraint: day '{hc.day_name}' not in planning week — skipping.",
+                )
+                continue
+
+            # Only include jobs that exist in the current job set.
+            valid_ids = [jid for jid in hc.job_ids if jid in jobs_by_id]
+            if not valid_ids:
+                continue
+
+            job_objs = [jobs_by_id[jid] for jid in valid_ids]
+            ordered_jobs = self._ordered_for_route(crew, job_objs)
+            ordered_ids = [j.id for j in ordered_jobs]
+
+            draft_plan.append({"crew_id": crew.id, "day": day, "job_ids": ordered_ids})
+            used[(crew.id, day)] = used.get((crew.id, day), 0) + sum(
+                j.estimated_minutes for j in job_objs
+            )
+            constrained_job_ids.update(valid_ids)
+
+            await ctx.emit(
+                self.name,
+                "constraint",
+                f"Hard constraint applied: {valid_ids} → {crew.name} on {day.isoformat()}.",
+                detail={"crew_id": crew.id, "day": day.isoformat(), "job_ids": ordered_ids},
+            )
+
         # Sort clusters: default heaviest-first; REVENUE_PRIORITY sorts by price.
         order = sorted(
             range(len(clusters)),
@@ -165,7 +217,11 @@ class CrewMatchAgent(Agent):
 
         for idx in order:
             cluster = clusters[idx]
-            cluster_jobs = [jobs_by_id[j] for j in cluster["job_ids"]]
+            # Skip jobs already locked by hard constraints.
+            remaining_ids = [j for j in cluster["job_ids"] if j not in constrained_job_ids]
+            if not remaining_ids:
+                continue
+            cluster_jobs = [jobs_by_id[j] for j in remaining_ids]
             total_minutes = sum(j.estimated_minutes for j in cluster_jobs)
 
             if place(cluster_jobs, "assign"):
@@ -212,6 +268,64 @@ class CrewMatchAgent(Agent):
         for entry in draft_plan:
             key = (entry["crew_id"], entry["day"])
             merged.setdefault(key, []).extend(entry["job_ids"])
+
+        # ── Crew split enforcement in geo_first mode ──────────────────────────
+        # When hard constraints specify different crews for different zones,
+        # do not allow the optimizer to merge zone-B jobs onto zone-A crew-days.
+        # Check: any crew-day that has BOTH constrained and non-constrained jobs
+        # from different hard-constraint crews is a violation.
+        if raw_constraints and mode == SchedulingMode.GEO_FIRST:
+            constrained_crew_for_job: dict[str, str] = {}
+            for hc in raw_constraints:
+                crew = next(
+                    (c for c in ctx.crews if hc.crew_name.lower() in c.name.lower()),
+                    None,
+                )
+                if crew:
+                    for jid in hc.job_ids:
+                        constrained_crew_for_job[jid] = crew.id
+
+            split_violations: list[str] = []
+            for (crew_id, day), job_ids in merged.items():
+                # Check if any job in this crew-day was hard-constrained to a
+                # different crew — that would be a zone-merge violation.
+                for jid in job_ids:
+                    if constrained_crew_for_job.get(jid, crew_id) != crew_id:
+                        split_violations.append(
+                            f"Zone-merge violation: {jid} hard-constrained to a different crew "
+                            f"but placed on {crew_id} {day.isoformat()}."
+                        )
+
+            if split_violations:
+                ctx.blackboard.setdefault("geo_cluster_violations", []).extend(split_violations)
+                for msg in split_violations:
+                    await ctx.emit(self.name, "warn", msg)
+
+        # ── Geo-cluster violation detection ───────────────────────────────────
+        # After merging, verify that jobs within the same geographic cluster are
+        # assigned to the same crew on the same day.  A cluster split across
+        # multiple crew-days is flagged as a critical routing error.
+        job_assignment: dict[str, tuple[str, date]] = {}  # job_id → (crew_id, day)
+        for (crew_id, day), job_ids in merged.items():
+            for jid in job_ids:
+                job_assignment[jid] = (crew_id, day)
+
+        geo_violations: list[str] = []
+        for cluster in clusters:
+            assigned_slots: set[tuple[str, date]] = set()
+            for jid in cluster["job_ids"]:
+                if jid in job_assignment:
+                    assigned_slots.add(job_assignment[jid])
+            if len(assigned_slots) > 1:
+                geo_violations.append(
+                    f"Geo-cluster split: jobs {cluster['job_ids']} spread across "
+                    f"{len(assigned_slots)} crew-days — routing inefficiency detected."
+                )
+
+        if geo_violations:
+            ctx.blackboard.setdefault("geo_cluster_violations", []).extend(geo_violations)
+            for msg in geo_violations:
+                await ctx.emit(self.name, "geo_violation", msg)
 
         # Safety invariant: every job in ctx.jobs must appear in either the
         # draft plan or the unscheduled list.  Jobs that are silently dropped

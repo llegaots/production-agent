@@ -18,6 +18,45 @@ from .base import Agent, AgentContext, drive_minutes, haversine_km
 class TimeBudgetAgent(Agent):
     name = "TimeBudgetAgent"
 
+    @staticmethod
+    def _reorder_if_backtrack(job_objs: list[Job], crew) -> list[Job]:
+        """Detect route backtracks and fix via nearest-neighbour from depot.
+
+        A backtrack occurs when the distance from stop[N] to stop[N+1] exceeds
+        the distance from stop[N] back to the depot — meaning the route moves
+        further away when it could return. When detected, re-sequence via
+        greedy nearest-neighbour from the crew base.
+        """
+        if len(job_objs) < 2:
+            return job_objs
+
+        has_backtrack = False
+        prev_lat, prev_lng = crew.base_lat, crew.base_lng
+        for n, job in enumerate(job_objs):
+            if n == 0:
+                prev_lat, prev_lng = job.lat, job.lng
+                continue
+            d_to_next = haversine_km(prev_lat, prev_lng, job.lat, job.lng)
+            d_to_depot = haversine_km(prev_lat, prev_lng, crew.base_lat, crew.base_lng)
+            if d_to_next > d_to_depot:
+                has_backtrack = True
+                break
+            prev_lat, prev_lng = job.lat, job.lng
+
+        if not has_backtrack:
+            return job_objs
+
+        # Re-sequence with greedy nearest-neighbour from depot.
+        remaining = job_objs[:]
+        reordered: list[Job] = []
+        cur_lat, cur_lng = crew.base_lat, crew.base_lng
+        while remaining:
+            nxt = min(remaining, key=lambda j: haversine_km(cur_lat, cur_lng, j.lat, j.lng))
+            reordered.append(nxt)
+            cur_lat, cur_lng = nxt.lat, nxt.lng
+            remaining.remove(nxt)
+        return reordered
+
     async def run(self, ctx: AgentContext) -> None:
         draft = ctx.blackboard.get("draft_plan", [])
         jobs_by_id = {j.id: j for j in ctx.jobs}
@@ -38,6 +77,12 @@ class TimeBudgetAgent(Agent):
             crew = crews_by_id[entry["crew_id"]]
             day: date = entry["day"]
             job_objs: list[Job] = [jobs_by_id[j] for j in entry["job_ids"]]
+
+            # ── Route backtrack detection & correction ────────────────────────
+            # After sequencing stops, detect when stop[N+1] is farther from
+            # stop[N] than stop[N] is from the depot.  Re-order with
+            # nearest-neighbour from depot when a backtrack is found.
+            job_objs = self._reorder_if_backtrack(job_objs, crew)
 
             stops: list[ScheduledStop] = []
             cur_lat, cur_lng = crew.base_lat, crew.base_lng
@@ -74,6 +119,26 @@ class TimeBudgetAgent(Agent):
                     warnings.append(
                         f"Job {job.id} is an after-hours job; consider scheduling later in the shift."
                     )
+
+            # ── Backtrack warning on final sequence ───────────────────────────
+            # Flag any stop where the distance from the previous stop to this
+            # stop exceeds the distance from the previous stop back to the depot
+            # (indicates a route that goes too far out before returning).
+            if len(job_objs) >= 2:
+                prev_lat, prev_lng = crew.base_lat, crew.base_lng
+                for n, job in enumerate(job_objs):
+                    if n == 0:
+                        prev_lat, prev_lng = job.lat, job.lng
+                        continue
+                    d_prev_to_cur = haversine_km(prev_lat, prev_lng, job.lat, job.lng)
+                    d_prev_to_depot = haversine_km(prev_lat, prev_lng, crew.base_lat, crew.base_lng)
+                    if d_prev_to_cur > d_prev_to_depot:
+                        warnings.append(
+                            f"Route backtrack at stop {n + 1} ({job.id}): "
+                            f"{d_prev_to_cur:.1f} km forward vs {d_prev_to_depot:.1f} km to depot — "
+                            f"consider reordering or splitting this crew-day."
+                        )
+                    prev_lat, prev_lng = job.lat, job.lng
 
             # return-to-base drive
             return_km = haversine_km(cur_lat, cur_lng, crew.base_lat, crew.base_lng)

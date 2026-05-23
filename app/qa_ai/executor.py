@@ -137,7 +137,11 @@ async def execute_case(
                     }
                 else:
                     sup = SupervisorAgent()
-                    plan = await sup.plan_week(ws, scheduling_mode=intent.scheduling_mode)
+                    plan = await sup.plan_week(
+                        ws,
+                        scheduling_mode=intent.scheduling_mode,
+                        hard_constraints=intent.hard_constraints or None,
+                    )
                     out.plan_results.append(plan)
                     out.final_plan = plan
                     _refresh_job_lookup(out)

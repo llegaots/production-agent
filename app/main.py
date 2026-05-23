@@ -519,7 +519,10 @@ async def reorganize_stream(req: ReorganizeRequest) -> StreamingResponse:
             else:
                 supervisor = SupervisorAgent()
                 result = await supervisor.plan_week(
-                    ws, emitter=emitter, scheduling_mode=intent.scheduling_mode
+                    ws,
+                    emitter=emitter,
+                    scheduling_mode=intent.scheduling_mode,
+                    hard_constraints=intent.hard_constraints or None,
                 )
                 try:
                     await persist_plan(result)
