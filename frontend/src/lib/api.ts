@@ -13,7 +13,6 @@ export async function streamChatMessage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       content,
-      use_orchestrator_agent: false,
     }),
   });
 

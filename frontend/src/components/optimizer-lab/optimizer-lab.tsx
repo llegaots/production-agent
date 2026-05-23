@@ -31,7 +31,7 @@ const SERVICE_TYPES = [
 export function OptimizerLab() {
   const [idPrefix, setIdPrefix] = useState("qa_job_");
   const [idFrom, setIdFrom] = useState("qa_job_006");
-  const [idTo, setIdTo] = useState("qa_job_019");
+  const [idTo, setIdTo] = useState("qa_job_012");
   const [targetDate, setTargetDate] = useState("2026-07-08");
   const [jobs, setJobs] = useState<EditableJob[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Partial<OptimizerLabJob>>>({});

@@ -76,6 +76,8 @@ def list_crews_for_lab(target_date: date) -> list[dict[str, Any]]:
     names = {c.id: c.name for c in repo.list_crews()}
     out: list[dict[str, Any]] = []
     for c in avail.crews:
+        if not c.crew_id.startswith("crew_"):
+            continue
         out.append(
             {
                 "crew_id": c.crew_id,
@@ -96,6 +98,9 @@ def run_optimizer_lab(body: OptimizerLabRunRequest) -> OptimizerLabRunResponse:
         GetCrewAvailabilityInput(target_date=body.target_date, crew_ids=body.crew_ids),
     )
     crew_ids = body.crew_ids or [c.crew_id for c in avail.crews if c.is_available]
+    # QA lab: use real West Island crews only (seed/golden test crews break skill matching).
+    if not body.crew_ids:
+        crew_ids = [c for c in crew_ids if c.startswith("crew_")]
     if not crew_ids:
         raise HTTPException(status_code=400, detail="No available crews for target date")
 

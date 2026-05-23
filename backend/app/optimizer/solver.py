@@ -71,18 +71,15 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
     If ``strict`` is True and the problem is infeasible, raises InfeasibleScheduleError.
     """
     pre_messages, blocked = _prevalidate(input_data)
-    if blocked:
-        result = OptimizerResult(
-            status="infeasible",
-            unassigned_job_ids=blocked,
-            messages=pre_messages,
-        )
-        if strict:
-            raise InfeasibleScheduleError(pre_messages, blocked)
-        return result
-
     crews = input_data.crews
     jobs = [j for j in input_data.jobs if j.id not in blocked]
+    if not jobs:
+        messages = pre_messages + ["No jobs remain after skill/equipment filtering"]
+        return OptimizerResult(
+            status="infeasible",
+            unassigned_job_ids=blocked + [j.id for j in input_data.jobs],
+            messages=messages,
+        )
     matrix = input_data.travel.minutes
     num_vehicles = len(crews)
     starts = [c.depot_index for c in crews]
@@ -251,7 +248,7 @@ def solve(input_data: OptimizerInput, *, strict: bool = False) -> OptimizerResul
             )
         )
 
-    unassigned = [j.id for j in input_data.jobs if j.id not in assigned]
+    unassigned = list(blocked) + [j.id for j in jobs if j.id not in assigned]
     job_mandatory = {j.id: j.mandatory for j in input_data.jobs}
     mandatory_left = [jid for jid in unassigned if job_mandatory.get(jid, False)]
     if mandatory_left:

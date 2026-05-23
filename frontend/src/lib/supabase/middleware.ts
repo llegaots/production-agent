@@ -8,10 +8,14 @@ export async function updateSession(request: NextRequest) {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
 
   const isAuthPage = request.nextUrl.pathname.startsWith("/login");
+  /** Dev tool — OR-Tools lab uses backend API only; no Supabase session required. */
+  const isOptimizerLab = request.nextUrl.pathname.startsWith("/optimizer-lab");
   const isProtected =
-    request.nextUrl.pathname.startsWith("/chat") ||
-    request.nextUrl.pathname.startsWith("/optimizer-lab") ||
-    request.nextUrl.pathname === "/";
+    request.nextUrl.pathname.startsWith("/chat") || request.nextUrl.pathname === "/";
+
+  if (isOptimizerLab) {
+    return supabaseResponse;
+  }
 
   if (!url || !key) {
     if (isProtected && !isAuthPage) {

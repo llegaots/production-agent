@@ -8,7 +8,20 @@ Interactive page to debug the schedule optimizer **without chat or orchestrator*
 http://localhost:3000/optimizer-lab
 ```
 
-(Requires login like `/chat`. Restart frontend after pulling.)
+**No login required** for the optimizer lab (chat still requires sign-in).
+
+Restart **both** servers after pulling:
+
+```bash
+cd backend && PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd frontend && npm run dev:clean -- --port 3000
+```
+
+Fix QA job equipment/skills once (if schedules show infeasible for bad gear):
+
+```bash
+python scripts/fix_qa_jobs_for_optimizer.py
+```
 
 ## What you can do
 

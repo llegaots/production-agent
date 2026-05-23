@@ -1,16 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { supabaseConfigError } from "@/lib/supabase/config";
+import { createBrowserClient } from "@supabase/ssr";
+import { getSupabaseConfig, supabaseConfigError } from "@/lib/supabase/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+function createSupabaseBrowserClient() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const { url, anonKey } = getSupabaseConfig();
+  if (!url || !anonKey) {
+    return null;
+  }
+  return createBrowserClient(url, anonKey);
+}
+
 export default function LoginPage() {
-  const supabase = createClient();
   const router = useRouter();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,6 +33,10 @@ export default function LoginPage() {
     e.preventDefault();
     if (configError) {
       setError(configError);
+      return;
+    }
+    if (!supabase) {
+      setError("Supabase is not configured. Check repo-root .env (SUPABASE_URL, SUPABASE_SERVICE_KEY).");
       return;
     }
     setLoading(true);
@@ -43,6 +58,10 @@ export default function LoginPage() {
           <CardTitle>Dispatcher sign in</CardTitle>
           <CardDescription>
             Supabase Auth — create a user in your project dashboard (Authentication → Users).
+            <br />
+            <a href="/optimizer-lab" className="text-primary mt-2 inline-block underline">
+              Open Optimizer Lab (no login)
+            </a>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -65,7 +84,7 @@ export default function LoginPage() {
               <p className="text-destructive text-sm">{configError}</p>
             ) : null}
             {error ? <p className="text-destructive text-sm">{error}</p> : null}
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full" disabled={loading || Boolean(configError)}>
               {loading ? "Signing in…" : "Sign in"}
             </Button>
           </form>

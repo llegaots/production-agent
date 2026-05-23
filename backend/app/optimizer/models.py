@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 OptimizerStatus = Literal["optimal", "feasible", "infeasible", "timeout"]
 
@@ -131,6 +131,7 @@ class OptimizerResult(BaseModel):
     objective_cost: int | None = None
     messages: list[str] = Field(default_factory=list)
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def assigned_job_ids(self) -> list[str]:
         return [stop.job_id for route in self.routes for stop in route.stops]
