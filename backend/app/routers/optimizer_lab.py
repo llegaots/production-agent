@@ -35,6 +35,10 @@ def list_jobs(
         description="Only jobs whose date window includes this day",
     ),
     status: str | None = Query(None),
+    fsa: str | None = Query(
+        None,
+        description="Postal FSA filter (e.g. J7V, H4R) — matches notes fsa=…",
+    ),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     return OperationsRepository().list_jobs_for_lab(
@@ -43,6 +47,7 @@ def list_jobs(
         id_to=id_to,
         target_date=target_date,
         status=status,
+        fsa=fsa,
         limit=limit,
     )
 

@@ -58,6 +58,7 @@ export type JobListParams = {
   id_from?: string;
   id_to?: string;
   target_date?: string;
+  fsa?: string;
   limit?: number;
 };
 
@@ -102,6 +103,7 @@ export function fetchLabJobs(params: JobListParams) {
   if (params.id_from) q.set("id_from", params.id_from);
   if (params.id_to) q.set("id_to", params.id_to);
   if (params.target_date) q.set("target_date", params.target_date);
+  if (params.fsa) q.set("fsa", params.fsa);
   if (params.limit) q.set("limit", String(params.limit));
   return labFetch<OptimizerLabJob[]>(`/optimizer-lab/jobs?${q}`);
 }

@@ -29,10 +29,11 @@ const SERVICE_TYPES = [
 ];
 
 export function OptimizerLab() {
-  const [idPrefix, setIdPrefix] = useState("qa_job_");
-  const [idFrom, setIdFrom] = useState("qa_job_006");
-  const [idTo, setIdTo] = useState("qa_job_012");
-  const [targetDate, setTargetDate] = useState("2026-07-08");
+  const [idPrefix, setIdPrefix] = useState("disp-");
+  const [idFrom, setIdFrom] = useState("");
+  const [idTo, setIdTo] = useState("");
+  const [fsa, setFsa] = useState("");
+  const [targetDate, setTargetDate] = useState("2026-06-05");
   const [jobs, setJobs] = useState<EditableJob[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Partial<OptimizerLabJob>>>({});
   const [loading, setLoading] = useState(true);
@@ -53,6 +54,7 @@ export function OptimizerLab() {
           id_from: idFrom || undefined,
           id_to: idTo || undefined,
           target_date: targetDate || undefined,
+          fsa: fsa || undefined,
           limit: 200,
         }),
         fetchLabCrews(targetDate),
@@ -72,7 +74,7 @@ export function OptimizerLab() {
     } finally {
       setLoading(false);
     }
-  }, [idPrefix, idFrom, idTo, targetDate]);
+  }, [idPrefix, idFrom, idTo, fsa, targetDate]);
 
   useEffect(() => {
     void loadJobs();
@@ -211,6 +213,21 @@ export function OptimizerLab() {
                 <label className="space-y-1">
                   <span className="text-muted-foreground text-xs">ID to</span>
                   <Input value={idTo} onChange={(e) => setIdTo(e.target.value)} />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-muted-foreground text-xs">Postal group (FSA)</span>
+                  <select
+                    className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+                    value={fsa}
+                    onChange={(e) => setFsa(e.target.value)}
+                  >
+                    <option value="">All FSAs</option>
+                    <option value="J7V">J7V — Île-Perrot</option>
+                    <option value="H9X">H9X — Baie-d&apos;Urfé</option>
+                    <option value="H4R">H4R — St-Laurent</option>
+                    <option value="H4M">H4M — St-Laurent / MTL</option>
+                    <option value="H4K">H4K — Montréal Ouest</option>
+                  </select>
                 </label>
               </div>
               <div className="flex gap-2">

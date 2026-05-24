@@ -1,0 +1,165 @@
+# Real dispatcher export — grouped by postal FSA (first 3 characters).
+# Lat/lng are FSA centroids + per-address jitter until Google geocode is run.
+# Run: python scripts/seed_dispatcher_clients.py [--geocode] [--force]
+
+meta:
+  prefix: disp
+  default_schedule_date: "2026-06-05"
+  postal_groups:
+    J7V:
+      label: "Île-Perrot / N-D-Île-Perrot (J7V)"
+      centroid: { lat: 45.383, lng: -73.878 }
+    H9X:
+      label: "Baie-d'Urfé (H9X)"
+      centroid: { lat: 45.458, lng: -73.905 }
+    H4R:
+      label: "Saint-Laurent (H4R)"
+      centroid: { lat: 45.515, lng: -73.665 }
+    H4M:
+      label: "Saint-Laurent / Montréal (H4M)"
+      centroid: { lat: 45.498, lng: -73.710 }
+    H4K:
+      label: "Montréal Ouest (H4K)"
+      centroid: { lat: 45.442, lng: -73.753 }
+
+clients:
+  - crm_id: "184320"
+    name: "Monique Andrei"
+    phone: "514-902-0971"
+    address: "81 Clarence Gagnon, Notre-Dame-de-l'Île-Perrot, QC"
+    postal_code: "J7V 8P6"
+    intake_date: "2026-01-28"
+    window_label: "Early June"
+    difficulty_label: "Easy"
+    price: 1090
+    cost: 313
+    work_units: 13
+    services_text: "Int/Ext Windows, Int Eaves, Ext Eaves, Soffit Cleaning, Rain-X Application, Siding Cleaned"
+    ladder: "20FT"
+
+  - crm_id: "184321"
+    name: "Randal Cowie"
+    phone: "514-475-7554"
+    address: "21 Rue Beechwood, Baie-d'Urfé, QC"
+    postal_code: "H9X 3K1"
+    intake_date: "2026-01-28"
+    window_label: "Early June"
+    difficulty_label: "Medium"
+    price: 362
+    cost: 100
+    work_units: 5
+    services_text: "Int Eaves"
+    ladder: "20FT 30FT+"
+
+  - crm_id: "184327"
+    name: "Beverly Kranitz"
+    phone: "514-457-1284"
+    address: "96 R. Marie-Marthe-Daoust, Notre-Dame-de-l'Île-Perrot, QC"
+    postal_code: "J7V 9Y9"
+    intake_date: "2026-01-28"
+    window_label: "Early June"
+    difficulty_label: "Very easy"
+    price: 220
+    cost: 63
+    work_units: 3
+    services_text: "Ext Windows"
+    ladder: "20FT"
+
+  - crm_id: "184316"
+    name: "Majambo Mbikay"
+    phone: "514-641-4140"
+    phone_alt: "514-425-1341"
+    address: "25 Rue des Gelinottes, L'Île-Perrot, QC"
+    postal_code: "J7V 9N1"
+    intake_date: "2026-01-22"
+    window_label: "Early June"
+    difficulty_label: "Easy"
+    price: 876
+    cost: 251
+    work_units: 11
+    services_text: "Int/Ext Windows, Int Eaves, Ext Eaves, Rain-X Application"
+    ladder: "20FT 30FT+"
+
+  - crm_id: "184317"
+    name: "Sophie Dubreuil"
+    phone: "514-425-5335"
+    address: "5 Rue Doris-Lussier, Notre-Dame-de-l'Île-Perrot, QC"
+    postal_code: "J7V 9G2"
+    intake_date: "2026-01-22"
+    window_label: "Early June"
+    difficulty_label: "Easy"
+    price: 446
+    cost: 125
+    work_units: 6
+    services_text: "Int/Ext Windows, Int Eaves"
+    ladder: "20FT 30FT+"
+
+  - crm_id: "184232"
+    name: "Maral Kataroyan"
+    phone: "514-995-9648"
+    address: "4410 Place Emma-Gendron, Saint-Laurent, QC"
+    postal_code: "H4R 0L3"
+    intake_date: "2026-04-14"
+    window_label: "Mid June"
+    difficulty_label: "Hard"
+    price: 888
+    cost: 255
+    work_units: 11
+    services_text: "Ext Windows, Rain-X Application"
+    ladder: "20FT"
+
+  - crm_id: "184217"
+    name: "Salim Belkhous"
+    phone: "514-836-6661"
+    address: "2830 Rue Heureux, Saint-Laurent, QC"
+    postal_code: "H4M 2A9"
+    intake_date: "2026-04-08"
+    window_label: "Mid June"
+    difficulty_label: "Medium"
+    price: 355
+    cost: 0
+    work_units: 4
+    services_text: "Ext Windows, Rain-X Application"
+    ladder: "20FT"
+
+  - crm_id: "148448"
+    name: "Yulan Shen"
+    phone: "514-337-2255"
+    address: "2918 Place Favreau, Montréal, QC"
+    postal_code: "H4M 2Y8"
+    intake_date: "2026-04-08"
+    window_label: "Mid June"
+    difficulty_label: "Easy"
+    price: 687
+    cost: 197
+    work_units: 8
+    services_text: "Int/Ext Windows"
+    ladder: "20FT"
+
+  - crm_id: "184491"
+    name: "Alex Raymond"
+    phone: "514-942-0897"
+    address: "11867 Avenue du Beau-Bois, Montréal, QC"
+    postal_code: "H4K 2Y4"
+    intake_date: "2026-04-07"
+    window_label: "Mid June"
+    difficulty_label: "Easy"
+    price: 391
+    cost: 112
+    work_units: 5
+    services_text: "Ext Windows, Int Eaves"
+    ladder: "20FT"
+
+  - crm_id: "184234"
+    name: "Natalie Bassila"
+    phone: "514-943-9673"
+    address: "7785 Rue Villebon, Saint-Laurent, QC"
+    postal_code: "H4M 1M9"
+    intake_date: "2026-04-07"
+    window_label: "Mid June"
+    difficulty_label: "Hard"
+    price: 690
+    cost: 200
+    work_units: 8
+    services_text: "Int/Ext Windows, Int Eaves, Gutter Guard Installation"
+    ladder: "20FT"

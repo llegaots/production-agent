@@ -75,11 +75,14 @@ class OperationsRepository:
         id_to: str | None = None,
         target_date: date | None = None,
         status: str | None = None,
+        fsa: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         q = self._db.table("jobs").select("*")
         if id_prefix:
             q = q.like("id", f"{id_prefix}%")
+        if fsa:
+            q = q.like("notes", f"%fsa={fsa.upper()}%")
         if id_from:
             q = q.gte("id", id_from)
         if id_to:
