@@ -22,7 +22,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RouteIQ — Field Intelligence for D2D Teams",
+  title: "RouteIQ - Field Intelligence for D2D Teams",
   description:
     "Live tracking, AI grading and route intelligence for door-to-door sales teams.",
 };

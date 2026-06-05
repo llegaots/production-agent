@@ -52,7 +52,7 @@ export function timeAgo(input: string | Date) {
   return `${days}d ago`;
 }
 
-/** Map a 0–100 grade to a letter */
+/** Map a 0-100 grade to a letter */
 export function gradeLetter(score: number) {
   if (score >= 93) return "A";
   if (score >= 90) return "A-";
@@ -66,7 +66,7 @@ export function gradeLetter(score: number) {
   return "F";
 }
 
-/** Deterministic pseudo-random in [0,1) from a seed — stable mock data */
+/** Deterministic pseudo-random in [0,1) from a seed - stable mock data */
 export function seededRandom(seed: number) {
   const x = Math.sin(seed) * 10000;
   return x - Math.floor(x);

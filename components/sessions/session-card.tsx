@@ -5,12 +5,29 @@ import { motion } from "framer-motion";
 import { DoorOpen, MessagesSquare, Sparkles, ArrowRight } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { LiveBadge } from "@/components/ui/pulse-dot";
-import { VectorMap } from "@/components/maps/vector-map";
-import { gradeLetter } from "@/lib/utils";
+import { FieldMap } from "@/components/maps/field-map";
+import { gradeLetter, cn } from "@/lib/utils";
 import { fadeInUp } from "@/lib/motion";
-import type { LatLng, Session } from "@/lib/types";
+import type { LatLng, Session, TranscriptLine } from "@/lib/types";
 
-export function SessionCard({ session, path }: { session: Session; path?: LatLng[] }) {
+const speakerStyle: Record<string, { label: string; cls: string }> = {
+  rep: { label: "Rep", cls: "text-primary-700" },
+  prospect: { label: "Prospect", cls: "text-ink" },
+  agent: { label: "AI", cls: "text-muted" },
+};
+
+export function SessionCard({
+  session,
+  path,
+  latestLines = [],
+}: {
+  session: Session;
+  path?: LatLng[];
+  latestLines?: TranscriptLine[];
+}) {
+  // last couple of spoken lines (skip the "walking" agent notes)
+  const convo = latestLines.filter((l) => l.speaker !== "agent").slice(-2);
+
   return (
     <motion.div
       variants={fadeInUp}
@@ -20,7 +37,16 @@ export function SessionCard({ session, path }: { session: Session; path?: LatLng
     >
       <Link href={`/sessions/${session.id}`} className="block">
         <div className="relative h-[150px]">
-          <VectorMap path={path} trail={session.trail} live={session.position} progress={0.62} className="h-full" />
+          <FieldMap
+            center={session.position}
+            path={path ?? session.routePath}
+            mutePath
+            breadcrumb={session.trailPath}
+            trail={session.trail}
+            live={session.position}
+            interactive={false}
+            className="h-full"
+          />
           <div className="absolute left-3 top-3">
             <LiveBadge />
           </div>
@@ -44,7 +70,26 @@ export function SessionCard({ session, path }: { session: Session; path?: LatLng
             <ArrowRight className="size-4 text-faint transition-transform group-hover:translate-x-1 group-hover:text-primary-600" />
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2">
+          {/* live conversation peek — fixed height so the card never resizes */}
+          <div className="mt-3 flex h-[52px] flex-col justify-center gap-1 overflow-hidden rounded-2xl border border-line-soft bg-surface-muted/50 px-3 py-2">
+            {convo.length ? (
+              convo.map((l) => {
+                const s = speakerStyle[l.speaker] ?? speakerStyle.prospect;
+                return (
+                  <p key={l.id} className="truncate text-[11.5px] leading-snug">
+                    <span className={cn("font-semibold", s.cls)}>{s.label}:</span>{" "}
+                    <span className="text-ink-soft">{l.text}</span>
+                  </p>
+                );
+              })
+            ) : (
+              <p className="flex items-center gap-1.5 text-[11.5px] text-faint">
+                <MessagesSquare className="size-3.5" /> Listening for conversation...
+              </p>
+            )}
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <Metric icon={<DoorOpen className="size-3.5" />} label="Doors" value={session.doors} />
             <Metric icon={<MessagesSquare className="size-3.5" />} label="Convos" value={session.conversations} />
             <Metric icon={<Sparkles className="size-3.5" />} label="Leads" value={session.leads} />

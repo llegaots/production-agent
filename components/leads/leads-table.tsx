@@ -19,7 +19,7 @@ export function LeadsTable({ leads, onSelect }: { leads: Lead[]; onSelect: (lead
         <EmptyState
           icon={<Contact className="size-6" />}
           title="No leads yet"
-          description="Leads your reps capture in the field are auto-detected, transcribed and graded — they'll land here in real time."
+          description="Leads your reps capture in the field are auto-detected, transcribed and graded - they'll land here in real time."
         />
       </div>
     );

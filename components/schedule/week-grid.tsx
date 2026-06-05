@@ -44,7 +44,7 @@ function ShiftBlock({ shift }: { shift: Shift }) {
         <div className="pl-1.5">
           <div className="truncate text-[11px] font-bold text-ink">{shift.repName}</div>
           <div className="truncate text-[10px] text-ink-soft">
-            {timeLabel(shift.start)}–{timeLabel(shift.end)}
+            {timeLabel(shift.start)}-{timeLabel(shift.end)}
           </div>
           {height > 52 && <div className="mt-0.5 truncate text-[10px] text-muted">{shift.territory}</div>}
         </div>

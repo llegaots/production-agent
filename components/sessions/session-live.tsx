@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useLiveSession } from "@/lib/realtime/use-live-session";
 import { SessionDetail } from "./session-detail";
-import type { DoorPing, Lead, Route, Session, TranscriptLine } from "@/lib/types";
+import type { AgentInsight, DoorPing, Lead, Route, Session, TranscriptLine } from "@/lib/types";
 
 /** Client wrapper: subscribes to the session's Realtime channel and feeds live
  *  transcript / insights / detected leads / door pins into the (unchanged)
@@ -12,12 +12,14 @@ export function SessionLive({
   session,
   route,
   initialTranscript,
+  initialInsights = [],
   initialLeads = [],
   initialDoors = [],
 }: {
   session: Session;
   route: Route | null;
   initialTranscript: TranscriptLine[];
+  initialInsights?: AgentInsight[];
   initialLeads?: Lead[];
   initialDoors?: DoorPing[];
 }) {
@@ -25,6 +27,7 @@ export function SessionLive({
   const live = useLiveSession(session.id, {
     session,
     transcript: initialTranscript,
+    insights: initialInsights,
     detectedLeads: initialLeads,
     doors: initialDoors,
   });
@@ -47,6 +50,7 @@ export function SessionLive({
     <SessionDetail
       session={mapSession}
       route={route}
+      breadcrumb={live.breadcrumb}
       transcript={live.transcript}
       insights={live.insights}
       detectedLeads={live.detectedLeads}

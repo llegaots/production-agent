@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-/** Live audio waveform driven by a 0–1 level. */
+/** Live audio waveform driven by a 0-1 level. */
 export function MicWave({ level, bars = 18, className }: { level: number; bars?: number; className?: string }) {
   return (
     <div className={cn("flex items-center gap-[3px]", className)}>

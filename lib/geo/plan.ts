@@ -96,7 +96,7 @@ function growCompact(
     const { d, n } = pq.splice(bi, 1)[0];
     if (d > dist[n]) continue;
     for (const { edge, to } of g.adj[n]) {
-      if (claimed.has(edge)) continue; // exclusive — never another pair's street
+      if (claimed.has(edge)) continue; // exclusive - never another pair's street
       claimed.add(edge);
       region.push(edge);
       total += cost(edge);
@@ -191,7 +191,7 @@ function minWeightMatching(g: StreetGraph, odd: number[], allowed: Set<number>):
 }
 
 /**
- * Closed walking LOOP for a zone — a route-inspection (Chinese-Postman style)
+ * Closed walking LOOP for a zone - a route-inspection (Chinese-Postman style)
  * Eulerian circuit: connect components, even-out odd nodes via shortest on-street
  * paths, then Hierholzer. Starts and ends at the meet node (nearest the center),
  * covering every street with minimal re-walking.
@@ -242,7 +242,7 @@ function pruneLongSpurs(g: StreetGraph, zoneEdges: number[], maxSpur = 90): numb
   return [...kept];
 }
 
-/** Open covering TRAIL (route inspection) — cover each street once with the
+/** Open covering TRAIL (route inspection) - cover each street once with the
  *  fewest repeats, NOT forced to return to start. Leaves the most-expensive
  *  odd-vertex pair as the open start/end, matches the rest. */
 function coverTrail(g: StreetGraph, keptEdges: number[], meet: LatLng): { path: LatLng[]; start: number } {
@@ -308,7 +308,7 @@ function coverTrail(g: StreetGraph, keptEdges: number[], meet: LatLng): { path: 
   let start = -1;
   if (matches.length > 0) {
     matches.sort((a, b) => plen(b) - plen(a));
-    start = matches[0][0]; // leave the costliest pair OPEN — its ends are the trail ends
+    start = matches[0][0]; // leave the costliest pair OPEN - its ends are the trail ends
     for (let m = 1; m < matches.length; m++) {
       const p = matches[m];
       for (let i = 1; i < p.length; i++) addInst(p[i - 1], p[i]);
@@ -435,7 +435,7 @@ export function planCoverage(
   let homesPerEdge = blockHomes;
   const assigned = homesPerEdge.reduce((a, b) => a + b, 0);
   if (assigned < 1) {
-    // no building data — fall back to a suburban density estimate
+    // no building data - fall back to a suburban density estimate
     homesPerEdge = Float64Array.from(g.edges.map((e) => e.len / 20));
   }
 

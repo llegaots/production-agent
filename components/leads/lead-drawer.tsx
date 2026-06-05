@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { LeadStatusBadge } from "@/components/ui/status";
-import { VectorMap } from "@/components/maps/vector-map";
-import { gradeLetter, timeAgo } from "@/lib/utils";
+import { FieldMap } from "@/components/maps/field-map";
+import { timeAgo } from "@/lib/utils";
 import type { Lead } from "@/lib/types";
 
 function ScoreDial({ score }: { score: number }) {
@@ -88,12 +88,11 @@ export function LeadDrawer({
           </div>
 
           <div className="h-[180px] overflow-hidden rounded-2xl border border-line">
-            <VectorMap
-              live={lead.position}
+            <FieldMap
+              center={lead.position}
               trail={[
-                { id: lead.id, at: lead.capturedAt, position: lead.position, outcome: "lead" },
+                { id: lead.id, at: lead.capturedAt, position: lead.position, outcome: "lead", address: lead.address },
               ]}
-              progress={0}
               className="h-full"
             />
           </div>

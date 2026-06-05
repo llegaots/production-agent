@@ -7,36 +7,48 @@ import { reverseGeocode } from "@/lib/geo/geocode";
    Lead spotter (Phase 2). Scans a window of a door-to-door sales transcript and
    extracts genuinely-interested prospects as structured leads, then writes them
    to the CRM (D2D_Leads, source=auto-detected) and emits a lead-detected insight.
-   Single forced-tool Claude call per scan — an extraction task, not an agent.
+   Single forced-tool Claude call per scan - an extraction task, not an agent.
 ---------------------------------------------------------------------------- */
 
 const MODEL = "claude-opus-4-8";
 
-const SYSTEM = `You are RouteIQ's lead spotter for a door-to-door roofing & exteriors company.
+const SYSTEM = `You are RouteIQ's lead spotter for a door-to-door home-services company (any trade - e.g. window cleaning, roofing, pest control).
 
 You read a transcript of a rep's doorstep conversations (the rep is labelled "rep",
 the homeowner "prospect") and identify GENUINELY INTERESTED prospects worth adding to
 the CRM as leads.
 
-What qualifies as a lead (only capture these):
-- The prospect agrees to / books a free inspection or appointment, OR
-- asks for a callback, quote, card, or more information, OR
-- shares contact info (name, phone, email) in a buying/curious context, OR
-- expresses clear, specific interest (e.g. mentions a known roof issue and wants it looked at).
+HARD REQUIREMENT - a prospect is ONLY a lead if the transcript contains BOTH:
+  1. their ACTUAL NAME, said by them (a real first name at minimum, e.g. "Janet" or
+     "Janet Walsh"), AND
+  2. a PHONE NUMBER they gave.
+If either is missing, DO NOT report them, no matter how interested they sound. A booking
+with no phone number is not a lead. A phone number with no name is not a lead.
 
-What is NOT a lead: flat refusals, "not interested", "no thanks", nobody home, small talk
-with no buying signal, or the rep talking to themselves between doors.
+The name field MUST be the real name they stated. NEVER output a placeholder or
+descriptor such as "the prospect", "Prospect", "Homeowner", "Resident", "Owner",
+"Customer", "the man/woman at 211", or a street description. If they never actually said
+their name, they are NOT a lead - leave them out entirely.
+
+On top of that minimum, the prospect should show real interest: agreeing to a quote /
+appointment / service, asking for a callback, or clear specific interest.
+
+What is NOT a lead: anyone without both a name and phone number, flat refusals,
+"not interested", "no thanks", nobody home, small talk with no buying signal, or the rep
+talking to themselves between doors.
 
 For each qualifying prospect, extract:
-- name: the prospect's name if stated, else a short descriptor like "Homeowner on Maple St".
-- address / phone / email: only if explicitly stated in the transcript; otherwise omit.
-- summary: one or two sentences a manager can scan — who they are and why they're a lead.
-- score: 0–100 confidence/quality. 80+ booked an appointment or gave contact info; 60–79 clear
-  interest / callback; 50–59 mild curiosity. Do NOT report anything you'd score below 50.
+- name: the prospect's stated name (required).
+- phone: the phone number they gave (required).
+- address / email: only if explicitly stated in the transcript; otherwise omit.
+- summary: one or two sentences a manager can scan - who they are and why they're a lead.
+- score: 0-100 confidence/quality. 80+ booked an appointment or gave contact info; 60-79 clear
+  interest / callback; 50-59 mild curiosity. Do NOT report anything you'd score below 50.
 - transcriptSnippet: the single most telling quote (verbatim, <160 chars) showing the interest.
 
-Be conservative — precision matters more than recall. If no one qualifies, return an empty list.
-Never invent contact details. Never re-report a prospect already in the "already captured" list.`;
+Be conservative - precision matters more than recall. If no one qualifies, return an empty list.
+Never invent contact details. Never re-report a prospect already in the "already captured" list.
+Write all text (summaries especially) in plain prose: never use em dashes or en dashes; use commas, periods, parentheses, or a normal hyphen instead.`;
 
 const tools: Anthropic.Tool[] = [
   {
@@ -51,15 +63,15 @@ const tools: Anthropic.Tool[] = [
           items: {
             type: "object",
             properties: {
-              name: { type: "string", description: "Prospect name or short descriptor." },
+              name: { type: "string", description: "The prospect's real stated name (required). Never a placeholder like 'the prospect' or 'Homeowner'." },
+              phone: { type: "string", description: "Phone number the prospect gave (required)." },
               address: { type: "string", description: "Street address, only if stated." },
-              phone: { type: "string", description: "Phone, only if stated." },
               email: { type: "string", description: "Email, only if stated." },
-              summary: { type: "string", description: "1–2 sentence manager-facing summary." },
-              score: { type: "integer", description: "0–100 confidence/quality. Omit if <50." },
+              summary: { type: "string", description: "1-2 sentence manager-facing summary." },
+              score: { type: "integer", description: "0-100 confidence/quality. Omit if <50." },
               transcriptSnippet: { type: "string", description: "Most telling verbatim quote." },
             },
-            required: ["name", "summary", "score", "transcriptSnippet"],
+            required: ["name", "phone", "summary", "score", "transcriptSnippet"],
           },
         },
       },
@@ -108,7 +120,24 @@ export async function spotLeads(opts: {
   const block = resp.content.find((b) => b.type === "tool_use");
   if (!block || block.type !== "tool_use") return [];
   const leads = (block.input as { leads?: SpottedLead[] }).leads ?? [];
-  return leads.filter((l) => l?.name && typeof l.score === "number" && l.score >= 50);
+  // Enforce the minimum: a lead must have a REAL name and a phone number.
+  const hasPhone = (s?: string) => Boolean(s && /\d/.test(s) && s.replace(/\D/g, "").length >= 7);
+  return leads.filter(
+    (l) => isRealName(l?.name) && hasPhone(l.phone) && typeof l.score === "number" && l.score >= 50,
+  );
+}
+
+// Reject placeholder/descriptor names so a lead always has an actual person's name.
+const GENERIC_NAME =
+  /\b(prospect|home\s?owner|resident|customer|client|tenant|occupant|caller|unknown|someone|some\s?one|n\/?a|the\s+(man|woman|lady|guy|person|owner|homeowner|resident))\b/i;
+function isRealName(name?: string): boolean {
+  const n = (name ?? "").trim();
+  if (n.length < 2) return false;
+  if (!/[a-z]/i.test(n)) return false; // must contain letters
+  if (GENERIC_NAME.test(n)) return false; // generic descriptor
+  if (/\bon\s+[a-z].*\b(st|street|ave|avenue|rd|road|dr|drive|blvd|lane|ln|way|cres|crescent|court|ct)\b/i.test(n))
+    return false; // "Homeowner on Maple St" style
+  return true;
 }
 
 /** Orchestration: load the session + a recent transcript window, dedup against
@@ -173,7 +202,7 @@ export async function detectAndStoreLeads(
   if (!fresh.length) return 0;
 
   // Door pins (with their GPS + conversation excerpt) let us place each lead at
-  // the exact home it was collected at — match by the lead's verbatim snippet.
+  // the exact home it was collected at - match by the lead's verbatim snippet.
   const { data: doorRows } = await db
     .from("D2D_DoorEvents")
     .select("lat,lng,transcript_excerpt")

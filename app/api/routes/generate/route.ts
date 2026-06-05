@@ -14,6 +14,8 @@ interface GenerateBody {
   minPerDoor?: number;
   walkKmh?: number;
   avoidDays?: number;
+  center?: { lat: number; lng: number };
+  bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
   marketers: { id: string; name: string; territory?: string; start: string; end: string }[];
 }
 
@@ -23,7 +25,7 @@ export async function POST(req: NextRequest) {
   }
   if (!process.env.ANTHROPIC_API_KEY) {
     return Response.json(
-      { error: "ANTHROPIC_API_KEY is not set — add it to .env.local to run the planner." },
+      { error: "ANTHROPIC_API_KEY is not set - add it to .env.local to run the planner." },
       { status: 400 },
     );
   }
@@ -90,6 +92,8 @@ export async function POST(req: NextRequest) {
           timePerDoorSec: minPerDoor * 60,
           walkSpeedMps: walkKmh / 3.6,
           sessionHours,
+          center: body.center,
+          bounds: body.bounds,
         },
         { onStage: async (stage, progress) => void (await update({ stage, progress })) },
       );

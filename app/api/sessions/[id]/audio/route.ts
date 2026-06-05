@@ -33,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (error) {
     const hint = /Bucket not found/i.test(error.message)
-      ? " — create the `session-audio` bucket (run supabase/migrations/0006_sessions.sql)."
+      ? " - create the `session-audio` bucket (run supabase/migrations/0006_sessions.sql)."
       : "";
     return Response.json({ error: error.message + hint }, { status: 500 });
   }

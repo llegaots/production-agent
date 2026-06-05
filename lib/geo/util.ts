@@ -47,7 +47,7 @@ export function boundsFromCenter(center: LatLng, radiusKm: number): GeoBounds {
   };
 }
 
-/** Clamp a bbox to a max span (km) around its center — keeps Overpass fast. */
+/** Clamp a bbox to a max span (km) around its center - keeps Overpass fast. */
 export function clampBounds(b: GeoBounds, maxSpanKm = 3): GeoBounds {
   const c = boundsCenter(b);
   const latHalf = maxSpanKm / 2 / 111; // ~111 km per degree latitude
@@ -87,7 +87,7 @@ export function distanceToPolyline(p: LatLng, line: LatLng[]): number {
   return min;
 }
 
-/** Perpendicular distance (m) from point p to segment a–b (equirectangular approx). */
+/** Perpendicular distance (m) from point p to segment a-b (equirectangular approx). */
 export function pointToSegment(p: LatLng, a: LatLng, b: LatLng): number {
   const lat0 = rad((a.lat + b.lat) / 2);
   const mx = (lng: number) => rad(lng) * Math.cos(lat0) * R;

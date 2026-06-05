@@ -26,7 +26,7 @@ const CATEGORIES: Objection["category"][] = ["price", "timing", "trust", "need",
 const STARTER: Playbook = {
   scriptTitle: "Cold Approach Script",
   script: `OPENER
-"Hi there — I'm {name} with {company}, I'm in the neighbourhood today. Quick question..."
+"Hi there - I'm {name} with {company}, I'm in the neighbourhood today. Quick question..."
 
 DISCOVERY
 -
@@ -35,7 +35,7 @@ VALUE
 -
 
 CLOSE
-"I've got {time A} or {time B} — which is easier?"`,
+"I've got {time A} or {time B} - which is easier?"`,
   objections: [
     { id: "obj-1", trigger: "It's too expensive", category: "price", handle: "Acknowledge, reframe to cost of inaction, offer the free check.", frequency: 0, successRate: 0 },
     { id: "obj-2", trigger: "Not right now", category: "timing", handle: "Micro-commit: 'It only takes 10 minutes and you don't need to be home.'", frequency: 0, successRate: 0 },
@@ -132,7 +132,7 @@ function PlaybookEditor({ playbook, onSave }: { playbook: Playbook; onSave: (p: 
         </span>
         <p className="text-[13px] leading-relaxed text-ink-soft">
           Your AI agents grade every conversation against this script and these objection handles in real
-          time. Keep it sharp — changes apply to all live sessions instantly.
+          time. Keep it sharp - changes apply to all live sessions instantly.
         </p>
       </motion.div>
 

@@ -1,4 +1,4 @@
-/* Lightweight date helpers for the scheduler — no external date library. */
+/* Lightweight date helpers for the scheduler - no external date library. */
 
 export function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -96,7 +96,7 @@ export function weekRangeLabel(days: Date[]): string {
   const aM = MONTHS[a.getMonth()].slice(0, 3);
   const bM = MONTHS[b.getMonth()].slice(0, 3);
   if (a.getMonth() === b.getMonth()) {
-    return `${aM} ${a.getDate()} – ${b.getDate()}, ${b.getFullYear()}`;
+    return `${aM} ${a.getDate()} - ${b.getDate()}, ${b.getFullYear()}`;
   }
-  return `${aM} ${a.getDate()} – ${bM} ${b.getDate()}, ${b.getFullYear()}`;
+  return `${aM} ${a.getDate()} - ${bM} ${b.getDate()}, ${b.getFullYear()}`;
 }

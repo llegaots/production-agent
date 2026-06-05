@@ -81,13 +81,13 @@ export function CreateRouteDrawer({
             <span className="mx-auto grid size-9 place-items-center rounded-full bg-primary-50 text-primary-700">
               <MapPinned className="size-4.5" />
             </span>
-            <p className="mt-1.5 text-[12px] text-muted">Manual route — no drawn path yet</p>
+            <p className="mt-1.5 text-[12px] text-muted">Manual route - no drawn path yet</p>
             <p className="text-[11px] text-faint">AI generation maps it to real streets</p>
           </div>
         </div>
 
         <Field label="Route name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Leslieville — Queen E Grid" autoFocus />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Leslieville - Queen E Grid" autoFocus />
         </Field>
         <Field label="Territory">
           <Input value={territory} onChange={(e) => setTerritory(e.target.value)} placeholder="e.g. Leslieville" />
@@ -105,7 +105,7 @@ export function CreateRouteDrawer({
           <span className="mb-2 block text-[12px] font-medium text-ink-soft">Assign marketers (a pair)</span>
           {reps.length === 0 && (
             <p className="rounded-2xl border border-dashed border-line bg-surface-muted/60 px-3 py-3 text-[12px] text-muted">
-              No reps on the team yet — add marketers in Team first.
+              No reps on the team yet - add marketers in Team first.
             </p>
           )}
           <div className="flex flex-col gap-1.5">

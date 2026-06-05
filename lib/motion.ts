@@ -33,7 +33,7 @@ export const scaleIn: Variants = {
   show: { opacity: 1, scale: 1, transition: softSpring },
 };
 
-/** Stagger container — children should use fadeInUp / scaleIn */
+/** Stagger container - children should use fadeInUp / scaleIn */
 export const staggerContainer = (stagger = 0.06, delayChildren = 0.04): Variants => ({
   hidden: {},
   show: {

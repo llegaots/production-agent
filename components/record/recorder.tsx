@@ -46,7 +46,7 @@ export function Recorder({
   const wakeLock = useRef<WakeLockSentinel | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
   const elapsedRef = useRef(0);
-  const activeRef = useRef(false); // recording or paused — read by the pagehide handler
+  const activeRef = useRef(false); // recording or paused - read by the pagehide handler
   // GPS / door tracking
   const trackerRef = useRef<DwellTracker | null>(null);
   const lastSeqRef = useRef(-1); // seq of the most recent finalized transcript line
@@ -209,7 +209,7 @@ export function Recorder({
       await capture.start();
       setPhase("recording");
       void acquireWakeLock();
-      // Start GPS dwell tracking. Location is optional — if the rep denies it,
+      // Start GPS dwell tracking. Location is optional - if the rep denies it,
       // recording + transcript still work, just without the map pins.
       const tracker = new DwellTracker({
         onPosition: (lat, lng) => postPosition(lat, lng),
@@ -343,7 +343,7 @@ export function Recorder({
               <CheckCircle2 className="size-9" />
             </div>
             <p className="text-center text-sm text-muted">
-              Session saved — {clock(elapsed)} recorded. Your manager has the full transcript.
+              Session saved - {clock(elapsed)} recorded. Your manager has the full transcript.
             </p>
             <Button size="lg" className="w-full" asChild>
               <Link href="/record">Start another session</Link>

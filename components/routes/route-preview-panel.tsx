@@ -13,7 +13,7 @@ import type { RoutePreview } from "@/lib/types";
 const PALETTE = ["#059e6e", "#2563eb", "#d97706", "#7c3aed", "#dc2626", "#0891b2"];
 const TORONTO = { lat: 43.6629, lng: -79.3957 };
 
-const SUGGESTIONS = ["Make the routes a bit bigger", "Shift coverage east", "Trim them — too long"];
+const SUGGESTIONS = ["Make the routes a bit bigger", "Shift coverage east", "Trim them - too long"];
 
 export function RoutePreviewPanel({
   genId,

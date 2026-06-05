@@ -15,7 +15,7 @@ export interface Rep {
   territory: string;
   email?: string;
   phone?: string;
-  /** rolling letter-grade score 0–100 */
+  /** rolling letter-grade score 0-100 */
   grade: number;
   doorsToday: number;
   conversationsToday: number;
@@ -51,6 +51,10 @@ export interface Session {
   position: LatLng;
   /** breadcrumb trail of visited doors */
   trail: DoorPing[];
+  /** the rep's walked GPS trail this session (persisted, downsampled) */
+  trailPath?: LatLng[];
+  /** the planned route geometry, for the grey baseline on cards */
+  routePath?: LatLng[];
 }
 
 export type DoorOutcome = "answered" | "no-answer" | "callback" | "not-interested" | "lead";
@@ -90,7 +94,7 @@ export interface AgentInsight {
   kind: InsightKind;
   title: string;
   detail: string;
-  /** 0–100 quality score for the moment */
+  /** 0-100 quality score for the moment */
   score?: number;
   objectionId?: string;
 }
@@ -105,7 +109,7 @@ export interface Lead {
   phone?: string;
   email?: string;
   status: LeadStatus;
-  /** AI lead score 0–100 */
+  /** AI lead score 0-100 */
   score: number;
   repId: string;
   repName: string;
@@ -140,7 +144,7 @@ export interface Route {
   doorsHit: number;
   answered: number;
   leads: number;
-  coverage: number; // 0–100
+  coverage: number; // 0-100
   createdAt: string;
   scheduledFor?: string;
   areaInput?: string;
@@ -195,7 +199,7 @@ export interface RouteGeneration {
   status: GenerationStatus;
   /** human-readable current stage, e.g. "Fetching streets" */
   stage: string;
-  /** 0–100 */
+  /** 0-100 */
   progress: number;
   agentSummary?: string;
   error?: string;
@@ -211,7 +215,7 @@ export interface Objection {
   handle: string;
   /** how often agents see this in the field */
   frequency: number;
-  /** average handle success 0–100 */
+  /** average handle success 0-100 */
   successRate: number;
 }
 

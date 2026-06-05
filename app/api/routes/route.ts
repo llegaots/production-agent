@@ -3,7 +3,7 @@ import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-/** Manually create a route (no AI). Geometry is optional — a hand-made route
+/** Manually create a route (no AI). Geometry is optional - a hand-made route
  *  starts without a drawn path; the pair + target are recorded immediately. */
 export async function POST(req: NextRequest) {
   if (!isSupabaseConfigured()) {

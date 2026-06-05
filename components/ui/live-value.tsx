@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-/** A number that gives a subtle pop whenever it changes — for live metrics. */
+/** A number that gives a subtle pop whenever it changes - for live metrics. */
 export function LiveValue({
   value,
   className,

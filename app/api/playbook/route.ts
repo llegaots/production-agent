@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const hint = /Could not find the table/.test(msg) ? " — run supabase/migrations/0004_playbook.sql first." : "";
+    const hint = /Could not find the table/.test(msg) ? " - run supabase/migrations/0004_playbook.sql first." : "";
     return Response.json({ error: msg + hint }, { status: 500 });
   }
   return Response.json({ ok: true });

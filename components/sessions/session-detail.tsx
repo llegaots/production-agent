@@ -25,14 +25,15 @@ import { DetectedLeads } from "./detected-leads";
 import { MetricStat } from "./metric-stat";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
 import { formatDuration } from "@/lib/utils";
-import type { AgentInsight, Lead, Route, Session, TranscriptLine } from "@/lib/types";
+import type { AgentInsight, LatLng, Lead, Route, Session, TranscriptLine } from "@/lib/types";
 
 /** Renders a single live session. Live data (transcript / insights / leads /
- *  position updates) will be streamed in via Supabase Realtime — for now those
- *  arrive as props and default to empty, showing each panel's standby state. */
+ *  position updates) is streamed in via Supabase Realtime; it arrives as props
+ *  and defaults to empty, showing each panel's standby state. */
 export function SessionDetail({
   session,
   route,
+  breadcrumb = [],
   transcript = [],
   insights = [],
   detectedLeads = [],
@@ -41,6 +42,7 @@ export function SessionDetail({
 }: {
   session: Session;
   route: Route | null;
+  breadcrumb?: LatLng[];
   transcript?: TranscriptLine[];
   insights?: AgentInsight[];
   detectedLeads?: Lead[];
@@ -149,6 +151,8 @@ export function SessionDetail({
             <FieldMap
               center={session.position}
               path={route?.path}
+              mutePath
+              breadcrumb={breadcrumb}
               trail={session.trail}
               live={session.position}
               liveLabel={firstName}

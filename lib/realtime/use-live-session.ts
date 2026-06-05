@@ -18,6 +18,7 @@ import type {
   AgentInsight,
   DoorOutcome,
   DoorPing,
+  LatLng,
   Lead,
   Session,
   Speaker,
@@ -32,6 +33,8 @@ export interface LiveSessionState {
   insights: AgentInsight[];
   detectedLeads: Lead[];
   doors: DoorPing[];
+  /** the rep's accumulated GPS trail this session (grows as they walk) */
+  breadcrumb: LatLng[];
   connected: boolean;
 }
 
@@ -94,7 +97,7 @@ const appendUnique = <T extends { id: string }>(list: T[], item: T): T[] =>
 
 /** Insert a transcript line keeping the list ordered by timestamp. Realtime
  *  events (and the rep's batched POSTs) can arrive out of order; ordering by
- *  `at` — assigned on the rep's device when each line is finalized — keeps the
+ *  `at` - assigned on the rep's device when each line is finalized - keeps the
  *  displayed conversation in true chronological order. */
 function insertByAt(list: TranscriptLine[], item: TranscriptLine): TranscriptLine[] {
   if (list.some((x) => x.id === item.id)) return list;
@@ -108,15 +111,19 @@ export function useLiveSession(
   initial?: {
     session?: Session | null;
     transcript?: TranscriptLine[];
+    insights?: AgentInsight[];
     detectedLeads?: Lead[];
     doors?: DoorPing[];
   },
 ): LiveSessionState {
   const [session, setSession] = useState<Session | null>(initial?.session ?? null);
   const [transcript, setTranscript] = useState<TranscriptLine[]>(initial?.transcript ?? []);
-  const [insights, setInsights] = useState<AgentInsight[]>([]);
+  const [insights, setInsights] = useState<AgentInsight[]>(initial?.insights ?? []);
   const [detectedLeads, setDetectedLeads] = useState<Lead[]>(initial?.detectedLeads ?? []);
   const [doors, setDoors] = useState<DoorPing[]>(initial?.doors ?? []);
+  // Seed only from the persisted trail; never from the single live position
+  // (which may be a placeholder). The poll/Realtime then grow it from real GPS.
+  const [breadcrumb, setBreadcrumb] = useState<LatLng[]>(initial?.session?.trailPath ?? []);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -126,7 +133,7 @@ export function useLiveSession(
     // NOTE: we deliberately do NOT use server-side `filter: session_id=eq.…`.
     // Postgres only honors Realtime filters on non-PK columns when the table has
     // REPLICA IDENTITY FULL; without it, every event is silently dropped. So we
-    // subscribe unfiltered and match the session in the client — guaranteed to
+    // subscribe unfiltered and match the session in the client - guaranteed to
     // deliver, and fine at team scale.
     const channel = db
       .channel(`session:${sessionId}`)
@@ -151,6 +158,19 @@ export function useLiveSession(
         { event: "UPDATE", schema: "public", table: "D2D_Sessions" },
         (p: RealtimePostgresUpdatePayload<Row>) => {
           if (p.new.id !== sessionId) return;
+          const hasPos = typeof p.new.lat === "number" && typeof p.new.lng === "number";
+          const pos = hasPos ? { lat: p.new.lat as number, lng: p.new.lng as number } : null;
+          // Prefer the persisted (downsampled) trail from the row; fall back to
+          // appending the live point so the trace is never lost.
+          if (Array.isArray(p.new.trail_path) && (p.new.trail_path as LatLng[]).length) {
+            setBreadcrumb(p.new.trail_path as LatLng[]);
+          } else if (pos) {
+            setBreadcrumb((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && Math.abs(last.lat - pos.lat) < 1e-6 && Math.abs(last.lng - pos.lng) < 1e-6) return prev;
+              return [...prev, pos];
+            });
+          }
           setSession((prev) =>
             prev
               ? {
@@ -162,10 +182,7 @@ export function useLiveSession(
                   noAnswers: (p.new.no_answers as number) ?? prev.noAnswers,
                   grade: (p.new.grade as number) ?? prev.grade,
                   endedAt: (p.new.ended_at as string) ?? prev.endedAt,
-                  position:
-                    typeof p.new.lat === "number" && typeof p.new.lng === "number"
-                      ? { lat: p.new.lat as number, lng: p.new.lng as number }
-                      : prev.position,
+                  position: pos ?? prev.position,
                 }
               : prev,
           );
@@ -194,5 +211,50 @@ export function useLiveSession(
     };
   }, [sessionId]);
 
-  return { session, transcript, insights, detectedLeads, doors, connected };
+  // Reliable trace fallback: poll the session's position + walked trail over HTTP.
+  // This keeps the live dot moving and the green trace growing even when Realtime
+  // UPDATE events don't arrive (the door/transcript INSERT events are separate).
+  useEffect(() => {
+    let alive = true;
+    let done = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/sessions/${sessionId}/trail`, { cache: "no-store" });
+        if (!r.ok || !alive) return;
+        const j = (await r.json()) as { lat?: number; lng?: number; trailPath?: LatLng[]; status?: string };
+        const path = Array.isArray(j.trailPath) ? j.trailPath : [];
+        if (path.length > 1) {
+          setBreadcrumb(path);
+        } else if (typeof j.lat === "number" && typeof j.lng === "number") {
+          const pos = { lat: j.lat, lng: j.lng };
+          setBreadcrumb((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && Math.abs(last.lat - pos.lat) < 1e-6 && Math.abs(last.lng - pos.lng) < 1e-6) return prev;
+            return [...prev, pos];
+          });
+        }
+        if (typeof j.lat === "number" && typeof j.lng === "number") {
+          const pos = { lat: j.lat, lng: j.lng };
+          setSession((prev) => (prev ? { ...prev, position: pos } : prev));
+        }
+        if (j.status && j.status !== "live") done = true;
+      } catch {
+        /* keep polling */
+      }
+    };
+    void tick();
+    const iv = setInterval(() => {
+      if (done) {
+        clearInterval(iv);
+        return;
+      }
+      void tick();
+    }, 1500);
+    return () => {
+      alive = false;
+      clearInterval(iv);
+    };
+  }, [sessionId]);
+
+  return { session, transcript, insights, detectedLeads, doors, breadcrumb, connected };
 }

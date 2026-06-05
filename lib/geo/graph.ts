@@ -24,7 +24,7 @@ const keyOf = (p: LatLng) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
 
 /**
  * Build a routable graph from OSM street geometry. Consecutive points in a way
- * become edges; shared intersection nodes (snapped) connect ways together — so
+ * become edges; shared intersection nodes (snapped) connect ways together - so
  * any path through the graph follows real streets.
  */
 export function buildGraph(segments: StreetSegment[]): StreetGraph {
@@ -199,7 +199,7 @@ export function shortestPathToAny(
 /**
  * Collapse pass-through (degree-2) points so each edge becomes one whole street
  * BLOCK between intersections (or to a dead-end). Planning then treats a block
- * atomically — a street is covered whole, never half. Homes are aggregated per
+ * atomically - a street is covered whole, never half. Homes are aggregated per
  * block from the fine-edge assignment.
  */
 export function contractGraph(

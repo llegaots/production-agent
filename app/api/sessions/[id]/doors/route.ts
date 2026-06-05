@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
 import { classifyDoor } from "@/lib/agent/door-classifier";
+import { reverseGeocodeDetailed } from "@/lib/geo/geocode";
+import { haversine } from "@/lib/geo/util";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,16 +52,33 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { outcome, note } = await classifyDoor(transcript);
   const excerpt = transcript.map((t) => `${t.speaker}: ${t.text}`).join("\n").slice(0, 2000);
 
+  // Snap the pin onto the actual home: reverse-geocode the GPS to the nearest
+  // address and use that building's own coordinate (within ~60 m, else keep GPS).
+  let pinLat = lat;
+  let pinLng = lng;
+  let address: string | null = null;
+  if (lat !== null && lng !== null) {
+    const rev = await reverseGeocodeDetailed(lat, lng);
+    if (rev) {
+      address = rev.address;
+      if (haversine({ lat, lng }, { lat: rev.lat, lng: rev.lng }) <= 60) {
+        pinLat = rev.lat;
+        pinLng = rev.lng;
+      }
+    }
+  }
+
   const { data: door, error } = await db
     .from("D2D_DoorEvents")
     .insert({
       session_id: sessionId,
       marketer_id: session?.marketer_id ?? null,
       at,
-      lat,
-      lng,
+      lat: pinLat,
+      lng: pinLng,
       outcome,
       note,
+      address,
       transcript_excerpt: excerpt || null,
       from_seq: fromSeq,
       to_seq: toSeq,
@@ -69,7 +88,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (error) {
     const hint = /Could not find the table/.test(error.message)
-      ? " — run supabase/migrations/0008_door_events.sql first."
+      ? " - run supabase/migrations/0008_door_events.sql first."
       : "";
     return Response.json({ error: error.message + hint }, { status: 500 });
   }

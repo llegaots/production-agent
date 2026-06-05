@@ -11,11 +11,11 @@ export function isSupabaseConfigured(): boolean {
 }
 
 let _admin: SupabaseClient | null = null;
-/** Privileged server client (bypasses RLS) — Route Handlers / writes only. */
+/** Privileged server client (bypasses RLS) - Route Handlers / writes only. */
 export function supabaseAdmin(): SupabaseClient {
   if (!url || !serviceKey) {
     throw new Error(
-      "Supabase admin not configured — set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local",
+      "Supabase admin not configured - set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local",
     );
   }
   _admin ??= createClient(url, serviceKey, { auth: { persistSession: false } });

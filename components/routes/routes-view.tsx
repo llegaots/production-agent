@@ -70,10 +70,6 @@ export function RoutesView({
     }
   };
 
-  if (previewGenId) {
-    return <RoutePreviewPanel genId={previewGenId} onClose={() => setPreviewGenId(null)} />;
-  }
-
   const selected = routes.find((r) => r.id === selectedId) ?? routes[0];
   const coverageTrail = useMemo(
     () =>
@@ -88,6 +84,11 @@ export function RoutesView({
     [routes],
   );
 
+  // Early return must come AFTER all hooks, or React sees fewer hooks rendered.
+  if (previewGenId) {
+    return <RoutePreviewPanel genId={previewGenId} onClose={() => setPreviewGenId(null)} />;
+  }
+
   if (!selected) {
     return (
       <div className="mx-auto max-w-[1100px]">
@@ -95,7 +96,7 @@ export function RoutesView({
           <EmptyState
             icon={<RouteIcon className="size-6" />}
             title="No routes yet"
-            description="Generate street-following routes with AI — it pulls who's on shift, pairs them up two-per-route, sizes each to the shift, and avoids streets you've already covered."
+            description="Generate street-following routes with AI - it pulls who's on shift, pairs them up two-per-route, sizes each to the shift, and avoids streets you've already covered."
             action={
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => setGenOpen(true)}>

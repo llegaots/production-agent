@@ -73,22 +73,25 @@ function Layers({
       r.path.forEach((p) => bounds.extend(p));
     });
 
-    // Door outcome pins on top of the routes — the at-a-glance coverage picture.
+    // Door outcome pins on top of the routes - small precise markers at each home.
     const info = new google.maps.InfoWindow();
     doors.forEach((d) => {
-      const circle = new google.maps.Circle({
-        center: d.position,
-        radius: 11,
+      const marker = new google.maps.Marker({
+        position: d.position,
         map,
-        fillColor: outcomeColor[d.outcome],
-        fillOpacity: 1,
-        strokeColor: "#ffffff",
-        strokeWeight: 1.5,
         zIndex: 30,
-        clickable: true,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 5.5,
+          fillColor: outcomeColor[d.outcome],
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 1.5,
+        },
       });
       const content =
         `<div style="font:700 12px system-ui;color:#0d1713">${outcomeLabel[d.outcome]}</div>` +
+        (d.address ? `<div style="font:600 11px system-ui;color:#0d1713;margin-top:1px">${escapeHtml(d.address)}</div>` : "") +
         (d.note
           ? `<div style="font:12px/1.4 system-ui;color:#52605a;max-width:220px;margin-top:2px">${escapeHtml(d.note)}</div>`
           : "");
@@ -97,10 +100,10 @@ function Layers({
         info.setPosition(d.position);
         info.open(map);
       };
-      circle.addListener("mouseover", open);
-      circle.addListener("click", open);
-      circle.addListener("mouseout", () => info.close());
-      objects.push(circle);
+      marker.addListener("mouseover", open);
+      marker.addListener("click", open);
+      marker.addListener("mouseout", () => info.close());
+      objects.push(marker);
       bounds.extend(d.position);
     });
 

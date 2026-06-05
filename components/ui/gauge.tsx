@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { cn, gradeLetter } from "@/lib/utils";
 
-/** 270° radial gauge for a 0–100 grade. */
+/** 270° radial gauge for a 0-100 grade. */
 export function Gauge({
   value,
   size = 168,

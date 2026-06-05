@@ -1,13 +1,14 @@
 import { after, type NextRequest } from "next/server";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
 import { detectAndStoreLeads, isLeadSpotterConfigured } from "@/lib/agent/lead-spotter";
+import { gradeSession, isSessionGraderConfigured } from "@/lib/agent/session-grader";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 /** End a live session: flip status to completed, record duration + audio path,
- *  and set the rep back to offline. This is also the trigger point for the
- *  Phase-3 post-shift grading agent (see lib/agent/session-grader.ts). */
+ *  and set the rep back to offline. Then (in the background) run the final
+ *  lead-detection sweep and the Phase-3 grading agent against the playbook. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!isSupabaseConfigured()) {
     return Response.json({ error: "Supabase is not configured (.env.local)." }, { status: 400 });
@@ -43,14 +44,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await db.from("D2D_Marketers").update({ status: "offline" }).eq("id", session.marketer_id);
   }
 
-  // Final comprehensive lead-detection sweep over the whole conversation (catches
-  // anything the periodic live passes missed). Runs in the background.
-  if (isLeadSpotterConfigured()) {
+  // Background: final lead-detection sweep over the whole conversation, then grade
+  // the shift against the team's playbook. Sequential so we don't fire two Claude
+  // bursts at once; neither is allowed to break the session lifecycle.
+  if (isLeadSpotterConfigured() || isSessionGraderConfigured()) {
     after(async () => {
-      await detectAndStoreLeads(sessionId, { maxLines: 200 });
+      if (isLeadSpotterConfigured()) await detectAndStoreLeads(sessionId, { maxLines: 200 });
+      if (isSessionGraderConfigured()) await gradeSession(sessionId);
     });
   }
 
-  // Phase 3: kick off the grading agent here with `after()` (deferred).
   return Response.json({ ok: true });
 }

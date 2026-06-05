@@ -1,10 +1,10 @@
 /* ----------------------------------------------------------------------------
-   Browser GPS dwell tracker. Watches the rep's position and detects "doors" —
+   Browser GPS dwell tracker. Watches the rep's position and detects "doors" -
    when they stop moving for a bit, that's a house they walked up to. Emits a
    door-open when a dwell begins and a door-close when they move on, so the
    caller can attach the transcript captured between those points.
 
-   GPS in residential areas drifts ~5–20m, so the thresholds are deliberately
+   GPS in residential areas drifts ~5-20m, so the thresholds are deliberately
    forgiving; pins land near the right house, not surveyor-accurate.
 ---------------------------------------------------------------------------- */
 
@@ -103,7 +103,7 @@ export class DwellTracker {
     const fromAnchor = metersBetween(this.anchor.lat, this.anchor.lng, lat, lng);
 
     if (fromAnchor <= STATIONARY_RADIUS_M) {
-      // Still parked near the anchor — open a door once we've dwelled long enough.
+      // Still parked near the anchor - open a door once we've dwelled long enough.
       if (!this.doorOpen && now - this.anchorSince >= DWELL_MS) {
         this.doorOpen = true;
         this.doorAnchor = { ...this.anchor };
@@ -126,7 +126,7 @@ export class DwellTracker {
         this.doorOpen = false;
         this.doorAnchor = null;
       } else {
-        // drifted but still within the door's radius — keep the visit open
+        // drifted but still within the door's radius - keep the visit open
         return;
       }
     }

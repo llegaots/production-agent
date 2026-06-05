@@ -6,7 +6,7 @@
    KeepAlive, refreshes the token, and reconnects the socket without dropping the
    MediaRecorder.
 
-   No framework deps — a React component drives it via the callbacks below.
+   No framework deps - a React component drives it via the callbacks below.
 ---------------------------------------------------------------------------- */
 import type { Speaker } from "@/lib/types";
 

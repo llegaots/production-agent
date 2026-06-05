@@ -58,7 +58,7 @@ export function RepDetailDrawer({
               <div className="mt-1 flex items-center gap-2">
                 <RepStatusBadge status={rep.status} size="sm" />
                 <span className="inline-flex items-center gap-1 text-[12px] text-muted">
-                  <MapPin className="size-3.5" /> {rep.territory || "—"}
+                  <MapPin className="size-3.5" /> {rep.territory || "-"}
                 </span>
               </div>
             </div>
@@ -130,7 +130,7 @@ export function RepDetailDrawer({
               {repShifts.slice(0, 8).map((s) => (
                 <div key={s.id} className="flex items-center justify-between rounded-xl bg-surface-muted px-3 py-2 text-[12px]">
                   <span className="font-medium text-ink">{new Date(s.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
-                  <span className="nums text-muted">{s.start}–{s.end}</span>
+                  <span className="nums text-muted">{s.start}-{s.end}</span>
                 </div>
               ))}
             </div>

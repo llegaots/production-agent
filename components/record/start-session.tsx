@@ -58,7 +58,7 @@ export function StartSession({ reps, teamId }: { reps: Rep[]; teamId: string | n
                 <Avatar name={rep.name} tint={rep.avatarTint} size="lg" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-ink">{rep.name}</p>
-                  <p className="truncate text-[13px] text-muted">{rep.territory || "—"}</p>
+                  <p className="truncate text-[13px] text-muted">{rep.territory || "-"}</p>
                 </div>
                 <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-50 text-primary-600">
                   {busy ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}

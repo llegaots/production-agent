@@ -15,7 +15,7 @@ export interface GeoCache {
   streets: StreetSegment[];
   homes: LatLng[];
   marketers: PlannerMarketer[];
-  /** pairings — groups of marketer ids that walk together */
+  /** pairings - groups of marketer ids that walk together */
   groups: string[][];
   /** per-group base time budget in seconds (from the session/shift length) */
   budgetsBaseSec: number[];
@@ -73,7 +73,7 @@ export function planPreview(cache: GeoCache, steer: Steer = {}): { routes: Previ
     });
   }
 
-  // 2. choose the seed center — focus street wins, else a direction nudge
+  // 2. choose the seed center - focus street wins, else a direction nudge
   const focusPt = steer.focusStreets?.length ? midpointOfStreets(cache.streets, steer.focusStreets) : null;
   const center = focusPt ?? shiftCenter(cache.center, cache.bounds, steer.focusDirection);
 
@@ -85,7 +85,7 @@ export function planPreview(cache: GeoCache, steer: Steer = {}): { routes: Previ
   const { zones, totalHomes } = planCoverage(streets, cache.homes, center, budgets, cache.pace, peoplePerGroup);
 
   const nameById = new Map(cache.marketers.map((m) => [m.id, m.name] as const));
-  const short = (cache.displayName || cache.area).split(/[—,]/)[0].trim() || cache.area;
+  const short = (cache.displayName || cache.area).split(/[-,]/)[0].trim() || cache.area;
 
   const routes: PreviewRoute[] = [];
   for (let i = 0; i < zones.length; i++) {
@@ -95,7 +95,7 @@ export function planPreview(cache: GeoCache, steer: Steer = {}): { routes: Previ
     const label = zone.topStreets.slice(0, 2).join(" & ") || "Residential core";
     routes.push({
       tempId: `r${i}`,
-      name: `${short} — ${label}`,
+      name: `${short} - ${label}`,
       territory: zone.topStreets[0] ?? short,
       topStreets: zone.topStreets,
       path: zone.path,
@@ -104,7 +104,7 @@ export function planPreview(cache: GeoCache, steer: Steer = {}): { routes: Previ
       doors: zone.doors,
       minutes: zone.minutes,
       marketerIds: ids,
-      marketerNames: ids.map((id) => nameById.get(id) ?? "—"),
+      marketerNames: ids.map((id) => nameById.get(id) ?? "-"),
     });
   }
   return { routes, totalHomes };

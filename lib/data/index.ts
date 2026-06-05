@@ -11,6 +11,7 @@ import type {
   Session,
   Playbook,
   TranscriptLine,
+  AgentInsight,
   DoorPing,
   DoorOutcome,
   Shift,
@@ -58,7 +59,7 @@ function mapRep(m: Record<string, unknown>): Rep {
   };
 }
 
-function mapSession(s: Record<string, unknown>, repName: string): Session {
+function mapSession(s: Record<string, unknown>, repName: string, routePath?: LatLng[]): Session {
   return {
     id: s.id as string,
     repId: (s.marketer_id as string) ?? "",
@@ -78,23 +79,38 @@ function mapSession(s: Record<string, unknown>, repName: string): Session {
       lng: (s.lng as number) ?? -79.3832,
     },
     trail: [],
+    trailPath: Array.isArray(s.trail_path) ? (s.trail_path as LatLng[]) : [],
+    routePath,
   };
 }
 
-/** Loads sessions for a set of rows and resolves rep names in one batch query. */
+/** Loads sessions for a set of rows, resolving rep names and planned-route
+ *  geometry (for the grey baseline on cards) in batch queries. */
 async function hydrateSessions(
   db: NonNullable<ReturnType<typeof supabaseRead>>,
   rows: Record<string, unknown>[],
 ): Promise<Session[]> {
   if (!rows.length) return [];
   const marketerIds = [...new Set(rows.map((s) => s.marketer_id).filter(Boolean))] as string[];
-  const { data: marketers } = marketerIds.length
-    ? await db.from("D2D_Marketers").select("id,name").in("id", marketerIds)
-    : { data: [] as Record<string, unknown>[] };
+  const routeIds = [...new Set(rows.map((s) => s.route_id).filter(Boolean))] as string[];
+  const [{ data: marketers }, { data: routes }] = await Promise.all([
+    marketerIds.length
+      ? db.from("D2D_Marketers").select("id,name").in("id", marketerIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    routeIds.length
+      ? db.from("D2D_Routes").select("id,path").in("id", routeIds)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+  ]);
   const nameById = new Map<string, string>();
   (marketers ?? []).forEach((m) => nameById.set(m.id as string, m.name as string));
+  const pathById = new Map<string, LatLng[]>();
+  (routes ?? []).forEach((r) => pathById.set(r.id as string, (r.path as LatLng[]) ?? []));
   return rows.map((s) =>
-    mapSession(s, nameById.get(s.marketer_id as string) ?? "Unassigned"),
+    mapSession(
+      s,
+      nameById.get(s.marketer_id as string) ?? "Unassigned",
+      pathById.get(s.route_id as string),
+    ),
   );
 }
 
@@ -312,7 +328,7 @@ export const data = {
     return session ?? null;
   },
 
-  /** Ordered transcript for a session — the manager page's initial server render
+  /** Ordered transcript for a session - the manager page's initial server render
    *  before Supabase Realtime takes over streaming new lines. */
   getSessionTranscript: async (id: string): Promise<TranscriptLine[]> => {
     const db = supabaseRead();
@@ -333,7 +349,60 @@ export const data = {
     );
   },
 
-  /** Leads auto-detected (or manually added) for one session — seeds the manager
+  /** Latest transcript lines per session - seeds the live sessions grid's
+   *  per-rep conversation peek before Realtime streams new lines. */
+  getLatestLines: async (
+    sessionIds: string[],
+    perSession = 4,
+  ): Promise<Record<string, TranscriptLine[]>> => {
+    const out: Record<string, TranscriptLine[]> = {};
+    const db = supabaseRead();
+    if (!db || !sessionIds.length) return out;
+    const { data: rows } = await db
+      .from("D2D_TranscriptLines")
+      .select("session_id,id,at,created_at,speaker,text,sentiment,seq")
+      .in("session_id", sessionIds)
+      .eq("is_final", true)
+      .order("seq", { ascending: true });
+    for (const r of rows ?? []) {
+      const sid = r.session_id as string;
+      (out[sid] ??= []).push({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        speaker: (r.speaker as Speaker) ?? "prospect",
+        text: (r.text as string) ?? "",
+        sentiment: typeof r.sentiment === "number" ? (r.sentiment as number) : undefined,
+      });
+    }
+    for (const sid of Object.keys(out)) out[sid] = out[sid].slice(-perSession);
+    return out;
+  },
+
+  /** Agent insights for a session (objection/script-adherence/coaching/tone +
+   *  the grade summary) - seeds the live agent panel before Realtime streams new
+   *  ones, and shows the full grading for a completed session on load. */
+  getSessionInsights: async (id: string): Promise<AgentInsight[]> => {
+    const db = supabaseRead();
+    if (!db) return [];
+    const { data: rows } = await db
+      .from("D2D_AgentInsights")
+      .select("*")
+      .eq("session_id", id)
+      .order("at", { ascending: true });
+    return (rows ?? []).map(
+      (r): AgentInsight => ({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        kind: (r.kind as AgentInsight["kind"]) ?? "coaching",
+        title: (r.title as string) ?? "",
+        detail: (r.detail as string) ?? "",
+        score: typeof r.score === "number" ? (r.score as number) : undefined,
+        objectionId: (r.objection_id as string) ?? undefined,
+      }),
+    );
+  },
+
+  /** Leads auto-detected (or manually added) for one session - seeds the manager
    *  view's detected-leads panel on load, before Realtime streams new ones. */
   getSessionLeads: async (id: string): Promise<Lead[]> => {
     const db = supabaseRead();
@@ -365,7 +434,7 @@ export const data = {
     );
   },
 
-  /** Door pins for one session — the coverage map's `trail`. */
+  /** Door pins for one session - the coverage map's `trail`. */
   getSessionDoors: async (id: string): Promise<DoorPing[]> => {
     const db = supabaseRead();
     if (!db) return [];
@@ -386,7 +455,7 @@ export const data = {
     );
   },
 
-  /** All recent door pins across sessions — powers the team coverage map. */
+  /** All recent door pins across sessions - powers the team coverage map. */
   getAllDoors: async (limit = 3000): Promise<DoorPing[]> => {
     const db = supabaseRead();
     if (!db) return [];
@@ -407,7 +476,7 @@ export const data = {
     );
   },
 
-  /** Past (non-live) sessions, newest first — powers per-marketer history. */
+  /** Past (non-live) sessions, newest first - powers per-marketer history. */
   getRecentSessions: async (limit = 100): Promise<Session[]> => {
     const db = supabaseRead();
     if (!db) return [];

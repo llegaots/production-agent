@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 8080",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 8080",
     "lint": "eslint",
-    "simulate": "node scripts/simulate-session.mjs"
+    "simulate": "node scripts/simulate-session.mjs",
+    "demo:seed": "node scripts/demo-seed.mjs",
+    "demo": "node scripts/simulate-session.mjs --demo"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

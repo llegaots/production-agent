@@ -164,7 +164,7 @@ export function ScheduleView({
         <div className="flex items-center gap-2.5 rounded-2xl border border-primary-100 bg-primary-50/50 px-4 py-2.5">
           <Info className="size-4 shrink-0 text-primary-600" />
           <p className="text-[12.5px] text-ink-soft">
-            No shifts scheduled yet — click any day, or hit <span className="font-semibold">New shift</span>, to plan one.
+            No shifts scheduled yet - click any day, or hit <span className="font-semibold">New shift</span>, to plan one.
           </p>
         </div>
       )}

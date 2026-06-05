@@ -10,7 +10,7 @@ const W = 800;
 const H = 520;
 
 /** Round to 2 decimals so SSR (Node Math.sin) and client (V8 Math.sin) emit
- *  identical SVG coordinate strings — avoids hydration mismatches. */
+ *  identical SVG coordinate strings - avoids hydration mismatches. */
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 const outcomeStyle: Record<DoorOutcome, { fill: string; ring?: string; glow?: boolean }> = {

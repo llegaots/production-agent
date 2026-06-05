@@ -37,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const cache = row.geo_cache as GeoCache | null;
   const preview = row.preview as RoutePreview | null;
   if (!cache || !preview) {
-    return Response.json({ error: "No preview to refine — regenerate first." }, { status: 400 });
+    return Response.json({ error: "No preview to refine - regenerate first." }, { status: 400 });
   }
 
   try {

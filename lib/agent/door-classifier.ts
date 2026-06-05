@@ -10,16 +10,17 @@ import type { DoorOutcome } from "@/lib/types";
 
 const MODEL = "claude-opus-4-8";
 
-const SYSTEM = `You classify the outcome of a single door knock for a door-to-door roofing & exteriors rep, based on the conversation at that door (the rep is "rep", the homeowner "prospect").
+const SYSTEM = `You classify the outcome of a single door knock for a door-to-door sales rep (any home-service trade - e.g. window cleaning, roofing, pest control), based on the conversation at that door (the rep is "rep", the homeowner "prospect").
 
 Pick exactly one outcome:
-- "lead": prospect booked an inspection/appointment, asked for a quote/callback with clear intent, or gave contact info in a buying context.
+- "lead": prospect booked an appointment/quote/service, asked for a quote/callback with clear intent, or gave contact info in a buying context.
 - "callback": prospect was open but wants to be contacted later / not ready now.
 - "answered": prospect talked but with no clear interest yet (neutral conversation).
 - "not-interested": prospect declined, said no, or shut it down.
 
 Also write a one-line note (<140 chars) a manager can scan: what happened and any next step.
-Base it only on the transcript. Do not invent details.`;
+Base it only on the transcript. Do not invent details.
+Write the note in plain text: never use em dashes or en dashes; use commas, periods, parentheses, or a normal hyphen instead.`;
 
 const tools: Anthropic.Tool[] = [
   {
@@ -56,7 +57,7 @@ export async function classifyDoor(
     return { outcome: "no-answer", note: "No one answered the door." };
   }
   if (!isDoorClassifierConfigured()) {
-    // Someone spoke but no AI available — record a neutral answered outcome.
+    // Someone spoke but no AI available - record a neutral answered outcome.
     return { outcome: "answered", note: "Conversation at the door." };
   }
 

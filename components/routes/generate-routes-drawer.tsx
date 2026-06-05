@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
+import { PostalAutocomplete, type PostalPlace } from "./postal-autocomplete";
 import { cn } from "@/lib/utils";
 import { ymd } from "@/lib/calendar";
 import type { Rep, Shift } from "@/lib/types";
@@ -35,6 +36,7 @@ export function GenerateRoutesDrawer({
 }) {
   const router = useRouter();
   const [area, setArea] = useState("");
+  const [place, setPlace] = useState<PostalPlace | null>(null);
   const [date, setDate] = useState(() => ymd(new Date()));
   const [sessionHours, setSessionHours] = useState(4);
   const [minPerDoor, setMinPerDoor] = useState(2);
@@ -104,6 +106,10 @@ export function GenerateRoutesDrawer({
           avoidDays,
           teamId,
           marketers,
+          // coordinates from the picked place, so the server skips geocoding a
+          // bare postal code (which OSM often can't resolve for Canadian FSAs)
+          center: place ? { lat: place.lat, lng: place.lng } : undefined,
+          bounds: place?.bounds,
         }),
       });
       json = await res.json();
@@ -160,15 +166,22 @@ export function GenerateRoutesDrawer({
         <div className="flex flex-col gap-5 p-6">
           <label className="block">
             <span className="mb-1.5 block text-[12px] font-medium text-ink-soft">Postal code to market</span>
-            <Input
+            <PostalAutocomplete
               value={area}
-              onChange={(e) => setArea(e.target.value)}
-              placeholder="e.g. M4M  ·  M5V 2T6"
-              autoCapitalize="characters"
-              className="uppercase placeholder:normal-case placeholder:text-faint"
+              onChange={(t) => {
+                setArea(t);
+                setPlace(null); // typed, not picked - fall back to geocoding
+              }}
+              onSelect={(p) => {
+                setArea(p.area);
+                setPlace(p);
+              }}
+              placeholder="Search an address or area, or type a postal code…"
             />
             <p className="mt-1.5 text-[11px] text-faint">
-              Routes are generated inside this postal code. Use the 3-character area (e.g. M4M) to cover the whole zone, or a full code to stay tight.
+              {place
+                ? `Pinned to ${place.label}. Routes will be generated around this area.`
+                : "Pick a suggestion to pin the exact spot. Use the 3-character area (e.g. M4M) to cover the whole zone, or a full code to stay tight."}
             </p>
           </label>
 
@@ -194,7 +207,7 @@ export function GenerateRoutesDrawer({
             </label>
           </div>
           <p className="-mt-2 text-[11px] text-faint">
-            Each route is a loop sized to the session — real homes (knock time) + walking — back to the meet point.
+            Each route is a loop sized to the session - real homes (knock time) + walking - back to the meet point.
           </p>
 
           <label className="block">
@@ -248,7 +261,7 @@ export function GenerateRoutesDrawer({
                     <Avatar name={rep.name} tint={rep.avatarTint} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-semibold text-ink">{rep.name}</div>
-                      <div className="truncate text-[11px] text-muted">{rep.territory || "—"}</div>
+                      <div className="truncate text-[11px] text-muted">{rep.territory || "-"}</div>
                     </div>
                     <input
                       type="time"
@@ -257,7 +270,7 @@ export function GenerateRoutesDrawer({
                       onChange={(e) => setM(rep.id, { start: e.target.value })}
                       className="h-8 rounded-lg border border-line bg-surface px-1.5 text-[12px] text-ink disabled:opacity-40"
                     />
-                    <span className="text-faint">–</span>
+                    <span className="text-faint">-</span>
                     <input
                       type="time"
                       value={m.end}
@@ -271,7 +284,7 @@ export function GenerateRoutesDrawer({
             </div>
             {included.length % 2 === 1 && included.length >= 1 && (
               <p className="mt-2 text-[11px] text-[#b45309]">
-                Odd number selected — the planner will fold the extra marketer into a nearby pair (no one walks alone).
+                Odd number selected - the planner will fold the extra marketer into a nearby pair (no one walks alone).
               </p>
             )}
           </div>
@@ -321,7 +334,7 @@ export function GenerateRoutesDrawer({
             })}
           </ol>
           <p className="text-[11px] text-faint">
-            This can take 20–60s — geocoding, pulling the street network from OpenStreetMap, then planning.
+            This can take 20-60s - geocoding, pulling the street network from OpenStreetMap, then planning.
           </p>
         </div>
       )}

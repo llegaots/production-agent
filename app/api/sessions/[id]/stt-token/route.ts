@@ -10,7 +10,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   await params; // session id (reserved for future per-session scoping/auditing)
   if (!isDeepgramConfigured()) {
     return Response.json(
-      { error: "DEEPGRAM_API_KEY is not set — add it to .env.local for live transcription." },
+      { error: "DEEPGRAM_API_KEY is not set - add it to .env.local for live transcription." },
       { status: 400 },
     );
   }

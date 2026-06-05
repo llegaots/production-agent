@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     const hint = /Could not find the table/.test(error.message)
-      ? " — run supabase/migrations/0003_leads.sql first."
+      ? " - run supabase/migrations/0003_leads.sql first."
       : "";
     return Response.json({ error: error.message + hint }, { status: 500 });
   }

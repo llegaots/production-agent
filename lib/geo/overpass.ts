@@ -9,7 +9,7 @@ const ENDPOINTS = [
   "https://overpass.openstreetmap.ru/api/interpreter",
 ];
 
-// Residential street classes only — streets that actually front homes.
+// Residential street classes only - streets that actually front homes.
 const HIGHWAY = "residential|living_street";
 
 // Building values that are NOT a dwelling/door.
@@ -68,7 +68,7 @@ export interface AreaData {
 
 /** Fetch residential streets + home building footprints within a bbox. When a
  *  boundary `polygon` is given (e.g. the postal-code shape), coverage is clipped
- *  to inside it — streets touching it are kept whole, homes must be inside. */
+ *  to inside it - streets touching it are kept whole, homes must be inside. */
 export async function fetchAreaData(bounds: GeoBounds, polygon?: LatLng[][]): Promise<AreaData> {
   const { minLat, minLng, maxLat, maxLng } = bounds;
   const bbox = `${minLat},${minLng},${maxLat},${maxLng}`;

@@ -16,7 +16,7 @@ let _client: DeepgramClient | null = null;
 function client(): DeepgramClient {
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
-    throw new Error("DEEPGRAM_API_KEY is not set — add it to .env.local for live transcription.");
+    throw new Error("DEEPGRAM_API_KEY is not set - add it to .env.local for live transcription.");
   }
   _client ??= new DeepgramClient({ apiKey });
   return _client;
@@ -31,7 +31,7 @@ export interface DeepgramCredential {
   token: string;
   /** WebSocket subprotocol scheme: bearer for grant tokens, token for API keys. */
   scheme: "bearer" | "token";
-  /** Seconds until expiry; 0 = no expiry (raw key — no refresh needed). */
+  /** Seconds until expiry; 0 = no expiry (raw key - no refresh needed). */
   expiresIn: number;
 }
 
@@ -53,13 +53,13 @@ export async function mintDeepgramCredential(ttlSeconds = 3600): Promise<Deepgra
     if (process.env.NODE_ENV !== "production") {
       console.warn(
         `[deepgram] Couldn't mint an ephemeral token (${msg}). Falling back to the raw ` +
-          `API key for the browser — DEV ONLY. For production, use a Deepgram key with the ` +
+          `API key for the browser - DEV ONLY. For production, use a Deepgram key with the ` +
           `'keys:write' scope (an Owner/Member key) so short-lived tokens can be minted.`,
       );
       return { token: apiKey, scheme: "token", expiresIn: 0 };
     }
     throw new Error(
-      "Could not mint a Deepgram token — the DEEPGRAM_API_KEY needs the 'keys:write' scope. " +
+      "Could not mint a Deepgram token - the DEEPGRAM_API_KEY needs the 'keys:write' scope. " +
         "Create an Owner/Member key in the Deepgram console.",
     );
   }

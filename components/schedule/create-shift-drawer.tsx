@@ -112,7 +112,7 @@ export function CreateShiftDrawer({
           <span className="mb-2 block text-[12px] font-medium text-ink-soft">Assign rep</span>
           {reps.length === 0 && (
             <p className="rounded-2xl border border-dashed border-line bg-surface-muted/60 px-3 py-3 text-[12px] text-muted">
-              No reps yet — you can still schedule an unassigned shift, or invite marketers in Settings.
+              No reps yet - you can still schedule an unassigned shift, or invite marketers in Settings.
             </p>
           )}
           <div className="flex flex-col gap-1.5">

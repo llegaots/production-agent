@@ -7,15 +7,16 @@ const MODEL = "claude-opus-4-8";
 
 const SYSTEM = `You are RouteIQ's route refiner. A manager is reviewing a PREVIEW of door-to-door walking routes and wants to adjust it in plain language. Translate their request into structured steering, then write a one-to-two sentence reply describing what you changed.
 
-You do NOT redraw streets yourself — a deterministic planner re-plans from the steering you emit. Always emit the FULL steering that reflects the whole conversation so far (it is re-applied from scratch each time, not stacked on the previous result).
+You do NOT redraw streets yourself - a deterministic planner re-plans from the steering you emit. Always emit the FULL steering that reflects the whole conversation so far (it is re-applied from scratch each time, not stacked on the previous result).
 
 Steering levers (call refine_plan exactly once):
 - excludeStreets: street-name fragments to keep OUT of coverage (e.g. manager says "skip Yonge St").
-- focusStreets: street-name fragments to pull coverage TOWARD — use when they say "cover X instead" or "make sure we get X".
+- focusStreets: street-name fragments to pull coverage TOWARD - use when they say "cover X instead" or "make sure we get X".
 - focusDirection: nudge the whole area north/south/east/west/center (e.g. "shift it east", "focus closer to downtown").
 - sizeFactor: scale every route's size. >1 = bigger (more doors), <1 = smaller. "make them bigger" ≈ 1.3, "too long, trim them" ≈ 0.75.
 
-Only set the levers the request implies; leave the rest unset. Match street fragments to the real street names provided. Keep 'reply' short, concrete, and friendly.`;
+Only set the levers the request implies; leave the rest unset. Match street fragments to the real street names provided. Keep 'reply' short, concrete, and friendly.
+Write 'reply' in plain text: never use em dashes or en dashes; use commas, periods, parentheses, or a normal hyphen instead.`;
 
 const tool: Anthropic.Tool = {
   name: "refine_plan",
@@ -26,7 +27,7 @@ const tool: Anthropic.Tool = {
       excludeStreets: { type: "array", items: { type: "string" }, description: "Street-name fragments to exclude." },
       focusStreets: { type: "array", items: { type: "string" }, description: "Street-name fragments to pull coverage toward." },
       focusDirection: { type: "string", enum: ["north", "south", "east", "west", "center"] },
-      sizeFactor: { type: "number", description: "Scale routes — >1 bigger, <1 smaller." },
+      sizeFactor: { type: "number", description: "Scale routes - >1 bigger, <1 smaller." },
       reply: { type: "string", description: "1-2 sentence reply to the manager about what changed." },
     },
     required: ["reply"],
@@ -42,7 +43,7 @@ export async function refinePreview(
 
   const streetNames = [...new Set(cache.streets.map((s) => s.name).filter(Boolean))].slice(0, 60);
   const routeLines = current.routes
-    .map((r, i) => `${i + 1}. ${r.name} — ${r.doors} doors, ~${r.minutes}m, streets: ${r.topStreets.join(", ")}, crew: ${r.marketerNames.join(" & ")}`)
+    .map((r, i) => `${i + 1}. ${r.name} - ${r.doors} doors, ~${r.minutes}m, streets: ${r.topStreets.join(", ")}, crew: ${r.marketerNames.join(" & ")}`)
     .join("\n");
   const history = current.chat
     .slice(-8)
@@ -63,7 +64,6 @@ Emit the full steering (reflecting the whole conversation) and a short reply.`;
   const resp = await client.messages.create({
     model: MODEL,
     max_tokens: 2000,
-    thinking: { type: "adaptive" },
     system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
     tools: [tool],
     tool_choice: { type: "tool", name: "refine_plan" },

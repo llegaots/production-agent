@@ -36,7 +36,7 @@ export const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/sessions": { title: "Live Sessions", subtitle: "Real-time monitoring of reps in the field" },
   "/leads": { title: "Leads", subtitle: "Every lead your team captured, auto-detected and graded" },
   "/routes": { title: "Routes", subtitle: "Plan territories and see what's covered vs. unhit" },
-  "/coverage": { title: "Coverage", subtitle: "Every route across all shifts — see what your team has hit" },
+  "/coverage": { title: "Coverage", subtitle: "Every route across all shifts - see what your team has hit" },
   "/schedule": { title: "Schedule", subtitle: "Plan and assign field shifts across your team" },
   "/team": { title: "Team", subtitle: "Performance, pace and grades for every marketer" },
   "/playbook": { title: "Playbook", subtitle: "The script and objections your AI agents grade against" },

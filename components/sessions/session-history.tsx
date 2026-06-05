@@ -53,14 +53,14 @@ export function SessionHistory({ sessions }: { sessions: Session[] }) {
                     </div>
                     <span className="hidden items-center gap-1 text-[12px] text-muted sm:inline-flex">
                       <Clock className="size-3.5" />
-                      {s.endedAt ? formatDuration(durationMin(s)) : "—"}
+                      {s.endedAt ? formatDuration(durationMin(s)) : "-"}
                     </span>
                     <span className="inline-flex items-center gap-1 text-[12px] text-muted">
                       <Sparkles className="size-3.5" />
                       {s.leads}
                     </span>
                     <span className="grid size-7 place-items-center rounded-lg bg-canvas-deep text-[12px] font-bold text-ink">
-                      {s.grade ? gradeLetter(s.grade) : "–"}
+                      {s.grade ? gradeLetter(s.grade) : "-"}
                     </span>
                     <ChevronRight className="size-4 text-faint transition-transform group-hover:translate-x-0.5" />
                   </Link>

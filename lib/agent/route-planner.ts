@@ -29,6 +29,9 @@ export interface PlannerInput {
   timePerDoorSec: number;
   walkSpeedMps: number;
   sessionHours?: number;
+  /** coordinates from a picked place, so we skip geocoding a bare postal code */
+  center?: LatLng;
+  bounds?: GeoBounds;
 }
 
 export interface PlannerHooks {
@@ -61,20 +64,21 @@ const MODEL = "claude-opus-4-8";
 const SYSTEM = `You are RouteIQ's field route planner. You design door-to-door walking routes for a team working ONE session in a target area, then save them.
 
 Hard rules:
-- Marketers ALWAYS work in PAIRS on the same route — nobody walks alone. Routes = floor(marketers / 2). An odd leftover joins the nearest pair as a trio — never a solo route.
-- Each route is an OPEN walking trail of UNIQUE streets — the pair walks together (one per side), covering each street in a SINGLE pass with minimal re-walking. It does NOT need to return to the start. Long cul-de-sacs are deferred to a later cleanup session rather than forcing backtracking. The tools build this.
-- Routes are sized by the SESSION LENGTH in hours, using REAL home counts (OSM buildings) and parallel knocking (the pair splits the doors, one per side) plus walking time. Do not invent door counts — the tools count actual homes.
-- Coverage is CONTIGUOUS and tight around the target center — pairs work adjacent zones with near-zero travel between them. Never spread across barriers (rivers/highways).
-- Stay INSIDE the target postal code — the tools clip streets/homes to its boundary.
+- Marketers ALWAYS work in PAIRS on the same route - nobody walks alone. Routes = floor(marketers / 2). An odd leftover joins the nearest pair as a trio - never a solo route.
+- Each route is an OPEN walking trail of UNIQUE streets - the pair walks together (one per side), covering each street in a SINGLE pass with minimal re-walking. It does NOT need to return to the start. Long cul-de-sacs are deferred to a later cleanup session rather than forcing backtracking. The tools build this.
+- Routes are sized by the SESSION LENGTH in hours, using REAL home counts (OSM buildings) and parallel knocking (the pair splits the doors, one per side) plus walking time. Do not invent door counts - the tools count actual homes.
+- Coverage is CONTIGUOUS and tight around the target center - pairs work adjacent zones with near-zero travel between them. Never spread across barriers (rivers/highways).
+- Stay INSIDE the target postal code - the tools clip streets/homes to its boundary.
 - Only residential streets that front homes are used.
 
-Process — call tools in order:
-1. geocode_area — resolve the postal code to a center, bounds, and (if available) its boundary.
-2. fetch_area — pull residential streets + home footprints, clipped to the postal code.
-3. get_past_coverage — drop streets covered recently (use the avoid window).
-4. propose_routes — pass the pairings (groups of marketer ids). The tool sizes each route to the session length from real homes, grows one contiguous area from the center, splits into adjacent zones, builds street-following trails, and names each from real streets. This produces a PREVIEW for the manager to review — nothing is scheduled yet. The manager can then chat to refine it and Confirm to schedule.
+Process - call tools in order:
+1. geocode_area - resolve the postal code to a center, bounds, and (if available) its boundary.
+2. fetch_area - pull residential streets + home footprints, clipped to the postal code.
+3. get_past_coverage - drop streets covered recently (use the avoid window).
+4. propose_routes - pass the pairings (groups of marketer ids). The tool sizes each route to the session length from real homes, grows one contiguous area from the center, splits into adjacent zones, builds street-following trails, and names each from real streets. This produces a PREVIEW for the manager to review - nothing is scheduled yet. The manager can then chat to refine it and Confirm to schedule.
 
-After it returns, reply with a short manager-facing summary (2-4 sentences): the pairings, the territory each got, real doors + minutes each, and that this is a preview they can refine in chat (e.g. "make Zone A bigger" or "cover Main St instead") before confirming.`;
+After it returns, reply with a short manager-facing summary (2-4 sentences): the pairings, the territory each got, real doors + minutes each, and that this is a preview they can refine in chat (e.g. "make Zone A bigger" or "cover Main St instead") before confirming.
+Write the summary in plain text: never use em dashes or en dashes; use commas, periods, parentheses, or a normal hyphen instead.`;
 
 const tools: Anthropic.Tool[] = [
   {
@@ -101,7 +105,7 @@ const tools: Anthropic.Tool[] = [
       properties: {
         groups: {
           type: "array",
-          description: "One entry per pair — each group is 2 (or 3) marketer ids who walk a route together.",
+          description: "One entry per pair - each group is 2 (or 3) marketer ids who walk a route together.",
           items: {
             type: "object",
             properties: { marketerIds: { type: "array", items: { type: "string" } } },
@@ -118,6 +122,16 @@ async function execute(name: string, input: unknown, ctx: Ctx, hooks: PlannerHoo
   switch (name) {
     case "geocode_area": {
       await hooks.onStage("Geocoding postal code", 12);
+      // Coordinates already supplied by the picked place - use them directly.
+      if (ctx.center && ctx.bounds) {
+        return {
+          displayName: ctx.displayName ?? ctx.input.area,
+          center: ctx.center,
+          bounds: ctx.bounds,
+          hasBoundary: false,
+          note: "Using the coordinates from the selected place.",
+        };
+      }
       const { area } = input as { area: string };
       const geo = await geocodeArea(area || ctx.input.area);
       ctx.bounds = clampBounds(geo.bounds, 4);
@@ -130,8 +144,8 @@ async function execute(name: string, input: unknown, ctx: Ctx, hooks: PlannerHoo
         bounds: ctx.bounds,
         hasBoundary: Boolean(geo.polygon?.length),
         note: geo.polygon?.length
-          ? "Found the postal code boundary — coverage will be clipped to inside it."
-          : "No exact boundary in OSM — using the postal code's bounding box.",
+          ? "Found the postal code boundary - coverage will be clipped to inside it."
+          : "No exact boundary in OSM - using the postal code's bounding box.",
       };
     }
     case "fetch_area": {
@@ -175,7 +189,7 @@ async function execute(name: string, input: unknown, ctx: Ctx, hooks: PlannerHoo
     case "propose_routes": {
       await hooks.onStage("Planning routes", 78);
       const { groups } = input as { groups: { marketerIds: string[] }[] };
-      if (!ctx.center || !ctx.bounds) return { error: "No center — call geocode_area first" };
+      if (!ctx.center || !ctx.bounds) return { error: "No center - call geocode_area first" };
       if (!ctx.streets.length) return { error: "No residential streets available in this area" };
 
       const hoursById = new Map(ctx.input.marketers.map((m) => [m.id, m.hours]));
@@ -215,7 +229,7 @@ async function execute(name: string, input: unknown, ctx: Ctx, hooks: PlannerHoo
         proposedRoutes: routes.map((r) => ({ name: r.name, doors: r.doors, minutes: r.minutes, marketers: r.marketerNames })),
         totalHomesInArea: totalHomes,
         count: routes.length,
-        note: "Preview built — not scheduled yet. The manager will review, optionally refine in chat, then confirm.",
+        note: "Preview built - not scheduled yet. The manager will review, optionally refine in chat, then confirm.",
       };
     }
     default:
@@ -227,6 +241,13 @@ export async function runRoutePlanner(input: PlannerInput, hooks: PlannerHooks):
   const client = new Anthropic();
   const pace: PaceModel = { timePerDoorSec: input.timePerDoorSec, walkSpeedMps: input.walkSpeedMps };
   const ctx: Ctx = { input, pace, streets: [], homes: [], pastLines: [], preview: null, geoCache: null, summary: "" };
+
+  // Picked-place coordinates skip the (unreliable for bare postal codes) geocode.
+  if (input.center && input.bounds) {
+    ctx.center = input.center;
+    ctx.bounds = clampBounds(input.bounds, 4);
+    ctx.displayName = input.area;
+  }
 
   const pairs = Math.max(1, Math.floor(input.marketers.length / 2));
   const sessionTxt = input.sessionHours ? `${input.sessionHours}h session` : "shift-length session";
