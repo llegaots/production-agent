@@ -62,3 +62,33 @@ export async function geocodeArea(input: string): Promise<GeocodeResult> {
     polygon: outerRings(r.geojson),
   };
 }
+
+/**
+ * Reverse-geocode a GPS point to a street address using Nominatim (free, no key).
+ * Returns a concise "123 Main St, City" string, or null if nothing resolves.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1` +
+      `&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "RouteIQ/1.0 (D2D field intelligence; contact: ops@routeiq.app)",
+        "Accept-Language": "en",
+      },
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      display_name?: string;
+      address?: Record<string, string>;
+    };
+    const a = j.address ?? {};
+    const street = [a.house_number, a.road].filter(Boolean).join(" ");
+    const city = a.city || a.town || a.village || a.hamlet || a.suburb;
+    const parts = [street || a.road, city].filter(Boolean);
+    return parts.length ? parts.join(", ") : (j.display_name ?? null);
+  } catch {
+    return null;
+  }
+}

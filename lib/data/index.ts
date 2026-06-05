@@ -386,6 +386,27 @@ export const data = {
     );
   },
 
+  /** All recent door pins across sessions — powers the team coverage map. */
+  getAllDoors: async (limit = 3000): Promise<DoorPing[]> => {
+    const db = supabaseRead();
+    if (!db) return [];
+    const { data: rows } = await db
+      .from("D2D_DoorEvents")
+      .select("*")
+      .order("at", { ascending: false })
+      .limit(limit);
+    return (rows ?? []).map(
+      (r): DoorPing => ({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+        outcome: (r.outcome as DoorOutcome) ?? "no-answer",
+        address: (r.address as string) ?? undefined,
+        note: (r.note as string) ?? undefined,
+      }),
+    );
+  },
+
   /** Past (non-live) sessions, newest first — powers per-marketer history. */
   getRecentSessions: async (limit = 100): Promise<Session[]> => {
     const db = supabaseRead();

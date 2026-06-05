@@ -2,26 +2,8 @@
 
 import { useEffect } from "react";
 import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
-import type { DoorOutcome, DoorPing, LatLng } from "@/lib/types";
-
-const outcomeColor: Record<DoorOutcome, string> = {
-  lead: "#059e6e",
-  answered: "#34d399",
-  callback: "#f5a623",
-  "not-interested": "#fb7185",
-  "no-answer": "#cbd3cf",
-};
-
-const outcomeLabel: Record<DoorOutcome, string> = {
-  lead: "Lead",
-  answered: "Answered",
-  callback: "Callback",
-  "not-interested": "Not interested",
-  "no-answer": "No answer",
-};
-
-const escapeHtml = (s: string) =>
-  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+import type { DoorPing, LatLng } from "@/lib/types";
+import { escapeHtml, outcomeColor, outcomeLabel } from "./outcome";
 
 const mapStyles: google.maps.MapTypeStyle[] = [
   { elementType: "geometry", stylers: [{ color: "#eef3f0" }] },

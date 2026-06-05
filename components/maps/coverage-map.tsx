@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
 import { cn } from "@/lib/utils";
-import type { LatLng } from "@/lib/types";
+import type { DoorPing, LatLng } from "@/lib/types";
+import { escapeHtml, outcomeColor, outcomeLabel } from "./outcome";
 
 export interface CoverageRoute {
   id: string;
@@ -22,7 +23,15 @@ const mapStyles: google.maps.MapTypeStyle[] = [
   { featureType: "transit", stylers: [{ visibility: "off" }] },
 ];
 
-function Layers({ routes, highlightId }: { routes: CoverageRoute[]; highlightId?: string | null }) {
+function Layers({
+  routes,
+  doors,
+  highlightId,
+}: {
+  routes: CoverageRoute[];
+  doors: DoorPing[];
+  highlightId?: string | null;
+}) {
   const map = useMap();
 
   useEffect(() => {
@@ -64,20 +73,56 @@ function Layers({ routes, highlightId }: { routes: CoverageRoute[]; highlightId?
       r.path.forEach((p) => bounds.extend(p));
     });
 
+    // Door outcome pins on top of the routes — the at-a-glance coverage picture.
+    const info = new google.maps.InfoWindow();
+    doors.forEach((d) => {
+      const circle = new google.maps.Circle({
+        center: d.position,
+        radius: 11,
+        map,
+        fillColor: outcomeColor[d.outcome],
+        fillOpacity: 1,
+        strokeColor: "#ffffff",
+        strokeWeight: 1.5,
+        zIndex: 30,
+        clickable: true,
+      });
+      const content =
+        `<div style="font:700 12px system-ui;color:#0d1713">${outcomeLabel[d.outcome]}</div>` +
+        (d.note
+          ? `<div style="font:12px/1.4 system-ui;color:#52605a;max-width:220px;margin-top:2px">${escapeHtml(d.note)}</div>`
+          : "");
+      const open = () => {
+        info.setContent(content);
+        info.setPosition(d.position);
+        info.open(map);
+      };
+      circle.addListener("mouseover", open);
+      circle.addListener("click", open);
+      circle.addListener("mouseout", () => info.close());
+      objects.push(circle);
+      bounds.extend(d.position);
+    });
+
     if (!bounds.isEmpty()) map.fitBounds(bounds, 64);
-    return () => objects.forEach((o) => o.setMap(null));
-  }, [map, routes, highlightId]);
+    return () => {
+      objects.forEach((o) => o.setMap(null));
+      info.close();
+    };
+  }, [map, routes, doors, highlightId]);
 
   return null;
 }
 
 export function CoverageMap({
   routes,
+  doors = [],
   center,
   highlightId,
   className,
 }: {
   routes: CoverageRoute[];
+  doors?: DoorPing[];
   center: LatLng;
   highlightId?: string | null;
   className?: string;
@@ -103,7 +148,7 @@ export function CoverageMap({
           styles={mapStyles}
           className="h-full w-full"
         >
-          <Layers routes={routes} highlightId={highlightId} />
+          <Layers routes={routes} doors={doors} highlightId={highlightId} />
         </Map>
       </APIProvider>
     </div>

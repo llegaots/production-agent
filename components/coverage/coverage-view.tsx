@@ -5,9 +5,10 @@ import { motion } from "framer-motion";
 import { Map as MapIcon, Users, DoorOpen, CalendarDays } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CoverageMap, type CoverageRoute } from "@/components/maps/coverage-map";
+import { MapLegend } from "@/components/maps/map-legend";
 import { cn } from "@/lib/utils";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
-import type { LatLng, Route } from "@/lib/types";
+import type { DoorOutcome, DoorPing, LatLng, Route } from "@/lib/types";
 
 const PALETTE = ["#059e6e", "#2563eb", "#d97706", "#7c3aed", "#dc2626", "#0891b2", "#db2777", "#65a30d"];
 const TORONTO = { lat: 43.6629, lng: -79.3957 };
@@ -19,7 +20,7 @@ function fmtDay(ymd: string) {
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
-export function CoverageView({ routes }: { routes: Route[] }) {
+export function CoverageView({ routes, doors = [] }: { routes: Route[]; doors?: DoorPing[] }) {
   const [day, setDay] = useState<string>("all");
   const [hover, setHover] = useState<string | null>(null);
 
@@ -29,12 +30,20 @@ export function CoverageView({ routes }: { routes: Route[] }) {
       const d = routeDay(r);
       if (d) set.add(d);
     });
+    doors.forEach((d) => {
+      const day = (d.at ?? "").slice(0, 10);
+      if (day) set.add(day);
+    });
     return [...set].sort((a, b) => b.localeCompare(a));
-  }, [routes]);
+  }, [routes, doors]);
 
   const filtered = useMemo(
     () => (day === "all" ? routes : routes.filter((r) => routeDay(r) === day)),
     [routes, day],
+  );
+  const filteredDoors = useMemo(
+    () => (day === "all" ? doors : doors.filter((d) => (d.at ?? "").slice(0, 10) === day)),
+    [doors, day],
   );
 
   const coverageRoutes: CoverageRoute[] = useMemo(
@@ -45,14 +54,19 @@ export function CoverageView({ routes }: { routes: Route[] }) {
     [filtered],
   );
 
-  const center: LatLng = filtered[0]?.center ?? routes[0]?.center ?? TORONTO;
-  const totals = useMemo(() => {
-    const planned = filtered.reduce((s, r) => s + (r.doorsPlanned || 0), 0);
-    const hit = filtered.reduce((s, r) => s + (r.doorsHit || 0), 0);
-    return { planned, hit, pct: planned ? Math.round((hit / planned) * 100) : 0 };
-  }, [filtered]);
+  const center: LatLng =
+    filtered[0]?.center ?? filteredDoors[0]?.position ?? routes[0]?.center ?? TORONTO;
 
-  if (!routes.length) {
+  // Outcome breakdown from the actual door visits (the at-a-glance numbers).
+  const outcome = useMemo(() => {
+    const counts = {} as Record<DoorOutcome, number>;
+    for (const d of filteredDoors) counts[d.outcome] = (counts[d.outcome] ?? 0) + 1;
+    const visited = filteredDoors.length;
+    const answered = visited - (counts["no-answer"] ?? 0);
+    return { counts, visited, answered, leads: counts.lead ?? 0, pct: visited ? Math.round((answered / visited) * 100) : 0 };
+  }, [filteredDoors]);
+
+  if (!routes.length && !doors.length) {
     return (
       <div className="mx-auto max-w-[1100px]">
         <div className="rounded-3xl border border-line bg-surface shadow-card">
@@ -84,10 +98,11 @@ export function CoverageView({ routes }: { routes: Route[] }) {
         {/* sidebar */}
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-3 gap-2">
-            <Stat label="Routes" value={filtered.length} />
-            <Stat label="Doors" value={totals.planned} />
-            <Stat label="Hit" value={`${totals.pct}%`} />
+            <Stat label="Visited" value={outcome.visited} />
+            <Stat label="Answer rate" value={`${outcome.pct}%`} />
+            <Stat label="Leads" value={outcome.leads} />
           </div>
+          {filteredDoors.length > 0 && <MapLegend counts={outcome.counts} className="w-full justify-center" />}
 
           <motion.div variants={staggerContainer(0.04)} initial="hidden" animate="show" className="flex flex-col gap-2">
             {filtered.map((r, i) => (
@@ -127,10 +142,16 @@ export function CoverageView({ routes }: { routes: Route[] }) {
           <CoverageMap
             key={day}
             routes={coverageRoutes}
+            doors={filteredDoors}
             center={center}
             highlightId={hover}
             className="h-full"
           />
+          {filteredDoors.length > 0 && (
+            <div className="pointer-events-none absolute left-4 top-4 z-10">
+              <MapLegend counts={outcome.counts} />
+            </div>
+          )}
         </div>
       </div>
     </div>

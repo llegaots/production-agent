@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Gauge } from "@/components/ui/gauge";
 import { LiveBadge } from "@/components/ui/pulse-dot";
 import { FieldMap } from "@/components/maps/field-map";
+import { MapLegend } from "@/components/maps/map-legend";
 import { LiveTranscript } from "./live-transcript";
 import { AgentPanel } from "./agent-panel";
 import { DetectedLeads } from "./detected-leads";
@@ -154,6 +155,11 @@ export function SessionDetail({
               progress={1}
               className="h-full"
             />
+            {session.trail.length > 0 && (
+              <div className="pointer-events-none absolute bottom-4 left-4 z-10">
+                <MapLegend />
+              </div>
+            )}
           </div>
           <div className="h-[460px]">
             <LiveTranscript

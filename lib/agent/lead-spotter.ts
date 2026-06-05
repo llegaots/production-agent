@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { reverseGeocode } from "@/lib/geo/geocode";
 
 /* ----------------------------------------------------------------------------
    Lead spotter (Phase 2). Scans a window of a door-to-door sales transcript and
@@ -124,7 +125,7 @@ export async function detectAndStoreLeads(
 
   const { data: session } = await db
     .from("D2D_Sessions")
-    .select("id,team_id,marketer_id,territory")
+    .select("id,team_id,marketer_id,territory,lat,lng")
     .eq("id", sessionId)
     .maybeSingle();
   if (!session) return 0;
@@ -157,31 +158,76 @@ export async function detectAndStoreLeads(
     return 0; // never let detection break the session lifecycle
   }
 
-  const fresh = spotted.filter((l) => !existingLower.has(l.name.toLowerCase()));
+  // Dedup within this batch (same person returned twice) by phone-digits-or-name,
+  // and against leads already captured this session.
+  const seen = new Set<string>();
+  const keyOf = (l: SpottedLead) =>
+    (l.phone ?? "").replace(/\D/g, "") || l.name.trim().toLowerCase();
+  const fresh = spotted.filter((l) => {
+    if (existingLower.has(l.name.toLowerCase())) return false;
+    const k = keyOf(l);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
   if (!fresh.length) return 0;
 
-  const rows = fresh.map((l) => ({
-    team_id: session.team_id ?? null,
-    marketer_id: session.marketer_id ?? null,
-    session_id: sessionId,
-    name: l.name,
-    address: l.address ?? null,
-    phone: l.phone ?? null,
-    email: l.email ?? null,
-    status: "new",
-    score: Math.max(0, Math.min(100, Math.round(l.score))),
-    territory: session.territory ?? null,
-    source: "auto-detected",
-    summary: l.summary,
-    transcript_snippet: l.transcriptSnippet,
-  }));
+  // Door pins (with their GPS + conversation excerpt) let us place each lead at
+  // the exact home it was collected at — match by the lead's verbatim snippet.
+  const { data: doorRows } = await db
+    .from("D2D_DoorEvents")
+    .select("lat,lng,transcript_excerpt")
+    .eq("session_id", sessionId);
+  const doors = doorRows ?? [];
 
-  const { error } = await db.from("D2D_Leads").insert(rows);
-  if (error) return 0;
+  const locFor = (lead: SpottedLead): { lat: number; lng: number } | null => {
+    const snip = lead.transcriptSnippet.trim().toLowerCase().slice(0, 40);
+    if (snip) {
+      const door = doors.find(
+        (d) =>
+          typeof d.lat === "number" &&
+          typeof d.lng === "number" &&
+          (d.transcript_excerpt as string | null)?.toLowerCase().includes(snip),
+      );
+      if (door) return { lat: door.lat as number, lng: door.lng as number };
+    }
+    if (typeof session.lat === "number" && typeof session.lng === "number") {
+      return { lat: session.lat as number, lng: session.lng as number };
+    }
+    return null;
+  };
+
+  const inserted: SpottedLead[] = [];
+  for (const l of fresh) {
+    const loc = locFor(l);
+    // Prefer the GPS-derived address; fall back to anything stated in the convo.
+    const address = (loc ? await reverseGeocode(loc.lat, loc.lng) : null) ?? l.address ?? null;
+    const { error: insErr } = await db.from("D2D_Leads").insert({
+      team_id: session.team_id ?? null,
+      marketer_id: session.marketer_id ?? null,
+      session_id: sessionId,
+      name: l.name,
+      address,
+      lat: loc?.lat ?? null,
+      lng: loc?.lng ?? null,
+      phone: l.phone ?? null,
+      email: l.email ?? null,
+      status: "new",
+      score: Math.max(0, Math.min(100, Math.round(l.score))),
+      territory: session.territory ?? null,
+      source: "auto-detected",
+      summary: l.summary,
+      transcript_snippet: l.transcriptSnippet,
+    });
+    // 23505 = unique violation: a concurrent pass already captured this lead. Skip.
+    if (insErr) continue;
+    inserted.push(l);
+  }
+  if (!inserted.length) return 0;
 
   // Mirror into the live agent panel + bump the session's lead counter.
   await db.from("D2D_AgentInsights").insert(
-    fresh.map((l) => ({
+    inserted.map((l) => ({
       session_id: sessionId,
       kind: "lead-detected",
       title: `Lead: ${l.name}`,
@@ -196,8 +242,8 @@ export async function detectAndStoreLeads(
     .maybeSingle();
   await db
     .from("D2D_Sessions")
-    .update({ leads: ((sRow?.leads as number) ?? 0) + fresh.length })
+    .update({ leads: ((sRow?.leads as number) ?? 0) + inserted.length })
     .eq("id", sessionId);
 
-  return fresh.length;
+  return inserted.length;
 }
