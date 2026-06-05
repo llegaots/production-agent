@@ -1,0 +1,198 @@
+"use client";
+
+/* ----------------------------------------------------------------------------
+   Subscribes a manager's live-session view to Supabase Realtime. New transcript
+   lines, agent insights, and auto-detected leads stream in via Postgres Changes;
+   session metric/status updates patch the session in place. Server-rendered
+   initial data seeds the state, so the page is useful before the socket opens.
+   Degrades gracefully (returns the initial data) when the browser client isn't
+   configured.
+---------------------------------------------------------------------------- */
+import { useEffect, useState } from "react";
+import type {
+  RealtimePostgresInsertPayload,
+  RealtimePostgresUpdatePayload,
+} from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabase/client";
+import type {
+  AgentInsight,
+  DoorOutcome,
+  DoorPing,
+  Lead,
+  Session,
+  Speaker,
+  TranscriptLine,
+} from "@/lib/types";
+
+type Row = Record<string, unknown>;
+
+export interface LiveSessionState {
+  session: Session | null;
+  transcript: TranscriptLine[];
+  insights: AgentInsight[];
+  detectedLeads: Lead[];
+  doors: DoorPing[];
+  connected: boolean;
+}
+
+function mapDoor(r: Row): DoorPing {
+  return {
+    id: r.id as string,
+    at: (r.at as string) ?? (r.created_at as string),
+    position: { lat: (r.lat as number) ?? 0, lng: (r.lng as number) ?? 0 },
+    outcome: (r.outcome as DoorOutcome) ?? "no-answer",
+    address: (r.address as string) ?? undefined,
+    note: (r.note as string) ?? undefined,
+  };
+}
+
+function mapTranscript(r: Row): TranscriptLine {
+  return {
+    id: r.id as string,
+    at: (r.at as string) ?? (r.created_at as string),
+    speaker: (r.speaker as Speaker) ?? "prospect",
+    text: (r.text as string) ?? "",
+    sentiment: typeof r.sentiment === "number" ? (r.sentiment as number) : undefined,
+  };
+}
+
+function mapInsight(r: Row): AgentInsight {
+  return {
+    id: r.id as string,
+    at: (r.at as string) ?? (r.created_at as string),
+    kind: (r.kind as AgentInsight["kind"]) ?? "coaching",
+    title: (r.title as string) ?? "",
+    detail: (r.detail as string) ?? "",
+    score: typeof r.score === "number" ? (r.score as number) : undefined,
+    objectionId: (r.objection_id as string) ?? undefined,
+  };
+}
+
+function mapLead(r: Row): Lead {
+  return {
+    id: r.id as string,
+    name: (r.name as string) ?? "New lead",
+    address: (r.address as string) ?? "",
+    position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+    phone: (r.phone as string) ?? undefined,
+    email: (r.email as string) ?? undefined,
+    status: (r.status as Lead["status"]) ?? "new",
+    score: (r.score as number) ?? 50,
+    repId: (r.marketer_id as string) ?? "",
+    repName: "",
+    territory: (r.territory as string) ?? "",
+    capturedAt: (r.captured_at as string) ?? (r.created_at as string),
+    source: (r.source as Lead["source"]) ?? "auto-detected",
+    summary: (r.summary as string) ?? "",
+    transcriptSnippet: (r.transcript_snippet as string) ?? "",
+    tags: (r.tags as string[]) ?? [],
+  };
+}
+
+const appendUnique = <T extends { id: string }>(list: T[], item: T): T[] =>
+  list.some((x) => x.id === item.id) ? list : [...list, item];
+
+/** Insert a transcript line keeping the list ordered by timestamp. Realtime
+ *  events (and the rep's batched POSTs) can arrive out of order; ordering by
+ *  `at` — assigned on the rep's device when each line is finalized — keeps the
+ *  displayed conversation in true chronological order. */
+function insertByAt(list: TranscriptLine[], item: TranscriptLine): TranscriptLine[] {
+  if (list.some((x) => x.id === item.id)) return list;
+  let i = list.length;
+  while (i > 0 && list[i - 1].at > item.at) i--;
+  return [...list.slice(0, i), item, ...list.slice(i)];
+}
+
+export function useLiveSession(
+  sessionId: string,
+  initial?: {
+    session?: Session | null;
+    transcript?: TranscriptLine[];
+    detectedLeads?: Lead[];
+    doors?: DoorPing[];
+  },
+): LiveSessionState {
+  const [session, setSession] = useState<Session | null>(initial?.session ?? null);
+  const [transcript, setTranscript] = useState<TranscriptLine[]>(initial?.transcript ?? []);
+  const [insights, setInsights] = useState<AgentInsight[]>([]);
+  const [detectedLeads, setDetectedLeads] = useState<Lead[]>(initial?.detectedLeads ?? []);
+  const [doors, setDoors] = useState<DoorPing[]>(initial?.doors ?? []);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const db = supabaseBrowser();
+    if (!db) return; // no anon key → stay on server-rendered initial data
+
+    // NOTE: we deliberately do NOT use server-side `filter: session_id=eq.…`.
+    // Postgres only honors Realtime filters on non-PK columns when the table has
+    // REPLICA IDENTITY FULL; without it, every event is silently dropped. So we
+    // subscribe unfiltered and match the session in the client — guaranteed to
+    // deliver, and fine at team scale.
+    const channel = db
+      .channel(`session:${sessionId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "D2D_TranscriptLines" },
+        (p: RealtimePostgresInsertPayload<Row>) => {
+          if (p.new.session_id !== sessionId) return;
+          setTranscript((prev) => insertByAt(prev, mapTranscript(p.new)));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "D2D_AgentInsights" },
+        (p: RealtimePostgresInsertPayload<Row>) => {
+          if (p.new.session_id !== sessionId) return;
+          setInsights((prev) => appendUnique(prev, mapInsight(p.new)));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "D2D_Sessions" },
+        (p: RealtimePostgresUpdatePayload<Row>) => {
+          if (p.new.id !== sessionId) return;
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: (p.new.status as Session["status"]) ?? prev.status,
+                  doors: (p.new.doors as number) ?? prev.doors,
+                  conversations: (p.new.conversations as number) ?? prev.conversations,
+                  leads: (p.new.leads as number) ?? prev.leads,
+                  noAnswers: (p.new.no_answers as number) ?? prev.noAnswers,
+                  grade: (p.new.grade as number) ?? prev.grade,
+                  endedAt: (p.new.ended_at as string) ?? prev.endedAt,
+                  position:
+                    typeof p.new.lat === "number" && typeof p.new.lng === "number"
+                      ? { lat: p.new.lat as number, lng: p.new.lng as number }
+                      : prev.position,
+                }
+              : prev,
+          );
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "D2D_DoorEvents" },
+        (p: RealtimePostgresInsertPayload<Row>) => {
+          if (p.new.session_id !== sessionId) return;
+          setDoors((prev) => appendUnique(prev, mapDoor(p.new)));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "D2D_Leads" },
+        (p: RealtimePostgresInsertPayload<Row>) => {
+          if (p.new.session_id !== sessionId) return;
+          setDetectedLeads((prev) => appendUnique(prev, mapLead(p.new)));
+        },
+      )
+      .subscribe((status) => setConnected(status === "SUBSCRIBED"));
+
+    return () => {
+      void db.removeChannel(channel);
+    };
+  }, [sessionId]);
+
+  return { session, transcript, insights, detectedLeads, doors, connected };
+}

@@ -1,0 +1,203 @@
+import "server-only";
+import Anthropic from "@anthropic-ai/sdk";
+import { supabaseAdmin } from "@/lib/supabase/server";
+
+/* ----------------------------------------------------------------------------
+   Lead spotter (Phase 2). Scans a window of a door-to-door sales transcript and
+   extracts genuinely-interested prospects as structured leads, then writes them
+   to the CRM (D2D_Leads, source=auto-detected) and emits a lead-detected insight.
+   Single forced-tool Claude call per scan — an extraction task, not an agent.
+---------------------------------------------------------------------------- */
+
+const MODEL = "claude-opus-4-8";
+
+const SYSTEM = `You are RouteIQ's lead spotter for a door-to-door roofing & exteriors company.
+
+You read a transcript of a rep's doorstep conversations (the rep is labelled "rep",
+the homeowner "prospect") and identify GENUINELY INTERESTED prospects worth adding to
+the CRM as leads.
+
+What qualifies as a lead (only capture these):
+- The prospect agrees to / books a free inspection or appointment, OR
+- asks for a callback, quote, card, or more information, OR
+- shares contact info (name, phone, email) in a buying/curious context, OR
+- expresses clear, specific interest (e.g. mentions a known roof issue and wants it looked at).
+
+What is NOT a lead: flat refusals, "not interested", "no thanks", nobody home, small talk
+with no buying signal, or the rep talking to themselves between doors.
+
+For each qualifying prospect, extract:
+- name: the prospect's name if stated, else a short descriptor like "Homeowner on Maple St".
+- address / phone / email: only if explicitly stated in the transcript; otherwise omit.
+- summary: one or two sentences a manager can scan — who they are and why they're a lead.
+- score: 0–100 confidence/quality. 80+ booked an appointment or gave contact info; 60–79 clear
+  interest / callback; 50–59 mild curiosity. Do NOT report anything you'd score below 50.
+- transcriptSnippet: the single most telling quote (verbatim, <160 chars) showing the interest.
+
+Be conservative — precision matters more than recall. If no one qualifies, return an empty list.
+Never invent contact details. Never re-report a prospect already in the "already captured" list.`;
+
+const tools: Anthropic.Tool[] = [
+  {
+    name: "record_leads",
+    description: "Record the interested prospects (leads) found in the transcript window.",
+    input_schema: {
+      type: "object",
+      properties: {
+        leads: {
+          type: "array",
+          description: "Leads found. Empty if no prospect showed genuine interest.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Prospect name or short descriptor." },
+              address: { type: "string", description: "Street address, only if stated." },
+              phone: { type: "string", description: "Phone, only if stated." },
+              email: { type: "string", description: "Email, only if stated." },
+              summary: { type: "string", description: "1–2 sentence manager-facing summary." },
+              score: { type: "integer", description: "0–100 confidence/quality. Omit if <50." },
+              transcriptSnippet: { type: "string", description: "Most telling verbatim quote." },
+            },
+            required: ["name", "summary", "score", "transcriptSnippet"],
+          },
+        },
+      },
+      required: ["leads"],
+    },
+  },
+];
+
+export interface SpottedLead {
+  name: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  summary: string;
+  score: number;
+  transcriptSnippet: string;
+}
+
+export function isLeadSpotterConfigured(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+/** One Claude call: transcript window → structured leads. */
+export async function spotLeads(opts: {
+  transcript: { speaker: string; text: string }[];
+  existingLeadNames?: string[];
+}): Promise<SpottedLead[]> {
+  if (!isLeadSpotterConfigured() || !opts.transcript.length) return [];
+
+  const convo = opts.transcript.map((t) => `${t.speaker}: ${t.text}`).join("\n");
+  const dedupe = opts.existingLeadNames?.length
+    ? `\n\nAlready captured (do NOT report these again):\n- ${opts.existingLeadNames.join("\n- ")}`
+    : "";
+  const userPrompt = `Transcript window:\n\n${convo}${dedupe}\n\nReturn any NEW qualifying leads via record_leads.`;
+
+  const client = new Anthropic();
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+    tools,
+    tool_choice: { type: "tool", name: "record_leads" },
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  const block = resp.content.find((b) => b.type === "tool_use");
+  if (!block || block.type !== "tool_use") return [];
+  const leads = (block.input as { leads?: SpottedLead[] }).leads ?? [];
+  return leads.filter((l) => l?.name && typeof l.score === "number" && l.score >= 50);
+}
+
+/** Orchestration: load the session + a recent transcript window, dedup against
+ *  leads already captured for this session, spot new leads, and persist them to
+ *  the CRM + emit a lead-detected insight. Safe to call from `after()`. Returns
+ *  the number of new leads created. */
+export async function detectAndStoreLeads(
+  sessionId: string,
+  opts: { maxLines?: number } = {},
+): Promise<number> {
+  if (!isLeadSpotterConfigured()) return 0;
+  const maxLines = opts.maxLines ?? 120;
+  const db = supabaseAdmin();
+
+  const { data: session } = await db
+    .from("D2D_Sessions")
+    .select("id,team_id,marketer_id,territory")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session) return 0;
+
+  // Recent transcript window (final lines only).
+  const { data: lineRows } = await db
+    .from("D2D_TranscriptLines")
+    .select("speaker,text,seq")
+    .eq("session_id", sessionId)
+    .eq("is_final", true)
+    .order("seq", { ascending: false })
+    .limit(maxLines);
+  const transcript = (lineRows ?? [])
+    .reverse()
+    .map((r) => ({ speaker: r.speaker as string, text: r.text as string }));
+  if (!transcript.length) return 0;
+
+  // Dedup against leads already captured in this session.
+  const { data: existing } = await db
+    .from("D2D_Leads")
+    .select("name")
+    .eq("session_id", sessionId);
+  const existingNames = (existing ?? []).map((l) => (l.name as string) ?? "").filter(Boolean);
+  const existingLower = new Set(existingNames.map((n) => n.toLowerCase()));
+
+  let spotted: SpottedLead[];
+  try {
+    spotted = await spotLeads({ transcript, existingLeadNames: existingNames });
+  } catch {
+    return 0; // never let detection break the session lifecycle
+  }
+
+  const fresh = spotted.filter((l) => !existingLower.has(l.name.toLowerCase()));
+  if (!fresh.length) return 0;
+
+  const rows = fresh.map((l) => ({
+    team_id: session.team_id ?? null,
+    marketer_id: session.marketer_id ?? null,
+    session_id: sessionId,
+    name: l.name,
+    address: l.address ?? null,
+    phone: l.phone ?? null,
+    email: l.email ?? null,
+    status: "new",
+    score: Math.max(0, Math.min(100, Math.round(l.score))),
+    territory: session.territory ?? null,
+    source: "auto-detected",
+    summary: l.summary,
+    transcript_snippet: l.transcriptSnippet,
+  }));
+
+  const { error } = await db.from("D2D_Leads").insert(rows);
+  if (error) return 0;
+
+  // Mirror into the live agent panel + bump the session's lead counter.
+  await db.from("D2D_AgentInsights").insert(
+    fresh.map((l) => ({
+      session_id: sessionId,
+      kind: "lead-detected",
+      title: `Lead: ${l.name}`,
+      detail: l.summary,
+      score: Math.max(0, Math.min(100, Math.round(l.score))),
+    })),
+  );
+  const { data: sRow } = await db
+    .from("D2D_Sessions")
+    .select("leads")
+    .eq("id", sessionId)
+    .maybeSingle();
+  await db
+    .from("D2D_Sessions")
+    .update({ leads: ((sRow?.leads as number) ?? 0) + fresh.length })
+    .eq("id", sessionId);
+
+  return fresh.length;
+}
