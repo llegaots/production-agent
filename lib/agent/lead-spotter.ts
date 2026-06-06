@@ -1,6 +1,5 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { MODEL, anthropic, isAnthropicConfigured } from "./client";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { reverseGeocode } from "@/lib/geo/geocode";
 
@@ -10,6 +9,8 @@ import { reverseGeocode } from "@/lib/geo/geocode";
    to the CRM (D2D_Leads, source=auto-detected) and emits a lead-detected insight.
    Single forced-tool Claude call per scan - an extraction task, not an agent.
 ---------------------------------------------------------------------------- */
+
+const MODEL = "claude-opus-4-8";
 
 const SYSTEM = `You are RouteIQ's lead spotter for a door-to-door home-services company (any trade - e.g. window cleaning, roofing, pest control).
 
@@ -90,7 +91,7 @@ export interface SpottedLead {
 }
 
 export function isLeadSpotterConfigured(): boolean {
-  return isAnthropicConfigured();
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 /** One Claude call: transcript window → structured leads. */
@@ -106,7 +107,7 @@ export async function spotLeads(opts: {
     : "";
   const userPrompt = `Transcript window:\n\n${convo}${dedupe}\n\nReturn any NEW qualifying leads via record_leads.`;
 
-  const client = anthropic();
+  const client = new Anthropic();
   const resp = await client.messages.create({
     model: MODEL,
     max_tokens: 2048,

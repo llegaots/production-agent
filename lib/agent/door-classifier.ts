@@ -1,6 +1,5 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { MODEL, anthropic, isAnthropicConfigured } from "./client";
 import type { DoorOutcome } from "@/lib/types";
 
 /* ----------------------------------------------------------------------------
@@ -8,6 +7,8 @@ import type { DoorOutcome } from "@/lib/types";
    No prospect speech in the window → "no-answer" (no AI call). Otherwise a
    single forced-tool Claude call returns the outcome + a one-line note.
 ---------------------------------------------------------------------------- */
+
+const MODEL = "claude-opus-4-8";
 
 const SYSTEM = `You classify the outcome of a single door knock for a door-to-door sales rep (any home-service trade - e.g. window cleaning, roofing, pest control), based on the conversation at that door (the rep is "rep", the homeowner "prospect").
 
@@ -45,7 +46,7 @@ export interface DoorClassification {
 }
 
 export function isDoorClassifierConfigured(): boolean {
-  return isAnthropicConfigured();
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 export async function classifyDoor(
@@ -62,7 +63,7 @@ export async function classifyDoor(
 
   const convo = transcript.map((t) => `${t.speaker}: ${t.text}`).join("\n");
   try {
-    const client = anthropic();
+    const client = new Anthropic();
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 512,

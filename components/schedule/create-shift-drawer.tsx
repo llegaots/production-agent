@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, CalendarPlus } from "lucide-react";
 import { Drawer } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { timeToMinutes } from "@/lib/calendar";
-import { Field } from "@/components/ui/field";
 import type { AccentTint, Rep, Route, Shift } from "@/lib/types";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[12px] font-medium text-ink-soft">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 export function CreateShiftDrawer({
   open,
@@ -34,12 +42,9 @@ export function CreateShiftDrawer({
   const [territory, setTerritory] = useState("");
   const [notes, setNotes] = useState("");
 
-  // reset the date field each time the drawer opens, without an effect
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
+  useEffect(() => {
     if (open) setDate(defaultDate);
-  }
+  }, [open, defaultDate]);
 
   const valid = date && timeToMinutes(end) > timeToMinutes(start);
 

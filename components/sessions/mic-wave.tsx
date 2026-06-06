@@ -9,9 +9,7 @@ export function MicWave({ level, bars = 18, className }: { level: number; bars?:
     <div className={cn("flex items-center gap-[3px]", className)}>
       {Array.from({ length: bars }).map((_, i) => {
         const phase = Math.sin((i / bars) * Math.PI);
-        // deterministic per-bar jitter so the wave looks organic but stays a pure render
-        const jitter = Math.abs(Math.sin((i + 1) * 12.9898));
-        const h = 3 + level * 22 * (0.4 + phase * 0.8) * (0.6 + jitter * 0.6);
+        const h = 3 + level * 22 * (0.4 + phase * 0.8) * (0.6 + Math.random() * 0.6);
         return (
           <motion.span
             key={i}

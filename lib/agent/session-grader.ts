@@ -1,6 +1,5 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { MODEL, anthropic, isAnthropicConfigured } from "./client";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
 /* ----------------------------------------------------------------------------
@@ -13,6 +12,8 @@ import { supabaseAdmin } from "@/lib/supabase/server";
        objection, coaching, tone) so they surface in the manager's agent panel.
    One forced-tool Claude call - an analysis task, not an agent loop.
 ---------------------------------------------------------------------------- */
+
+const MODEL = "claude-opus-4-8";
 
 type Criterion = { id: string; label: string; weight: number; description: string };
 type Objection = { id: string; trigger: string; category: string; handle: string };
@@ -79,7 +80,7 @@ const tools: Anthropic.Tool[] = [
 ];
 
 export function isSessionGraderConfigured(): boolean {
-  return isAnthropicConfigured();
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 interface GradeResult {
@@ -150,7 +151,7 @@ Grade this shift against the playbook via grade_session.`;
 
   let result: GradeResult | null = null;
   try {
-    const client = anthropic();
+    const client = new Anthropic();
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,

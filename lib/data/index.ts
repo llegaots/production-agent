@@ -31,60 +31,11 @@ const emptyDashboard: DashboardData = {
   liveActivity: [],
 };
 
-const DEFAULT_CENTER: LatLng = { lat: 43.6532, lng: -79.3832 };
-
 const tint = (v: unknown): AccentTint =>
   (["emerald", "sky", "violet", "amber", "rose"].includes(v as string) ? v : "emerald") as AccentTint;
 
 const centerOf = (path: LatLng[]): LatLng =>
-  path.length ? path[Math.floor(path.length / 2)] : DEFAULT_CENTER;
-
-/** lat/lng off a row, defaulting to the map's home center when absent. */
-const posOf = (r: Record<string, unknown>): LatLng => ({
-  lat: (r.lat as number) ?? DEFAULT_CENTER.lat,
-  lng: (r.lng as number) ?? DEFAULT_CENTER.lng,
-});
-
-function mapLead(
-  r: Record<string, unknown>,
-  opts: { repName?: string; territory?: string; defaultSource?: Lead["source"] } = {},
-): Lead {
-  return {
-    id: r.id as string,
-    name: (r.name as string) ?? "New lead",
-    address: (r.address as string) ?? "",
-    position: posOf(r),
-    phone: (r.phone as string) ?? undefined,
-    email: (r.email as string) ?? undefined,
-    status: (r.status as Lead["status"]) ?? "new",
-    score: (r.score as number) ?? 50,
-    repId: (r.marketer_id as string) ?? "",
-    repName: opts.repName ?? "",
-    territory: (r.territory as string) ?? opts.territory ?? "",
-    capturedAt: (r.captured_at as string) ?? (r.created_at as string),
-    source: (r.source as Lead["source"]) ?? opts.defaultSource ?? "manual",
-    summary: (r.summary as string) ?? "",
-    transcriptSnippet: (r.transcript_snippet as string) ?? "",
-    tags: (r.tags as string[]) ?? [],
-  };
-}
-
-const mapTranscriptLine = (r: Record<string, unknown>): TranscriptLine => ({
-  id: r.id as string,
-  at: (r.at as string) ?? (r.created_at as string),
-  speaker: (r.speaker as Speaker) ?? "prospect",
-  text: (r.text as string) ?? "",
-  sentiment: typeof r.sentiment === "number" ? (r.sentiment as number) : undefined,
-});
-
-const mapDoor = (r: Record<string, unknown>): DoorPing => ({
-  id: r.id as string,
-  at: (r.at as string) ?? (r.created_at as string),
-  position: posOf(r),
-  outcome: (r.outcome as DoorOutcome) ?? "no-answer",
-  address: (r.address as string) ?? undefined,
-  note: (r.note as string) ?? undefined,
-});
+  path.length ? path[Math.floor(path.length / 2)] : { lat: 43.6532, lng: -79.3832 };
 
 function mapRep(m: Record<string, unknown>): Rep {
   return {
@@ -123,7 +74,10 @@ function mapSession(s: Record<string, unknown>, repName: string, routePath?: Lat
     leads: (s.leads as number) ?? 0,
     noAnswers: (s.no_answers as number) ?? 0,
     grade: (s.grade as number) ?? 0,
-    position: posOf(s),
+    position: {
+      lat: (s.lat as number) ?? 43.6532,
+      lng: (s.lng as number) ?? -79.3832,
+    },
     trail: [],
     trailPath: Array.isArray(s.trail_path) ? (s.trail_path as LatLng[]) : [],
     routePath,
@@ -318,12 +272,26 @@ export const data = {
     const mById = new Map<string, Record<string, unknown>>();
     (marketers ?? []).forEach((m) => mById.set(m.id as string, m));
 
-    return rows.map((r) => {
+    return rows.map((r): Lead => {
       const m = r.marketer_id ? mById.get(r.marketer_id as string) : undefined;
-      return mapLead(r, {
+      return {
+        id: r.id as string,
+        name: r.name as string,
+        address: (r.address as string) ?? "",
+        position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+        phone: (r.phone as string) ?? undefined,
+        email: (r.email as string) ?? undefined,
+        status: (r.status as Lead["status"]) ?? "new",
+        score: (r.score as number) ?? 50,
+        repId: (r.marketer_id as string) ?? "",
         repName: (m?.name as string) ?? "Unassigned",
-        territory: m?.home_territory as string,
-      });
+        territory: (r.territory as string) ?? (m?.home_territory as string) ?? "",
+        capturedAt: (r.captured_at as string) ?? (r.created_at as string),
+        source: (r.source as Lead["source"]) ?? "manual",
+        summary: (r.summary as string) ?? "",
+        transcriptSnippet: (r.transcript_snippet as string) ?? "",
+        tags: (r.tags as string[]) ?? [],
+      };
     });
   },
   getLead: async (id: string): Promise<Lead | null> => {
@@ -370,7 +338,15 @@ export const data = {
       .select("*")
       .eq("session_id", id)
       .order("seq", { ascending: true });
-    return (rows ?? []).map(mapTranscriptLine);
+    return (rows ?? []).map(
+      (r): TranscriptLine => ({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        speaker: (r.speaker as Speaker) ?? "prospect",
+        text: (r.text as string) ?? "",
+        sentiment: typeof r.sentiment === "number" ? (r.sentiment as number) : undefined,
+      }),
+    );
   },
 
   /** Latest transcript lines per session - seeds the live sessions grid's
@@ -390,7 +366,13 @@ export const data = {
       .order("seq", { ascending: true });
     for (const r of rows ?? []) {
       const sid = r.session_id as string;
-      (out[sid] ??= []).push(mapTranscriptLine(r));
+      (out[sid] ??= []).push({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        speaker: (r.speaker as Speaker) ?? "prospect",
+        text: (r.text as string) ?? "",
+        sentiment: typeof r.sentiment === "number" ? (r.sentiment as number) : undefined,
+      });
     }
     for (const sid of Object.keys(out)) out[sid] = out[sid].slice(-perSession);
     return out;
@@ -430,7 +412,26 @@ export const data = {
       .select("*")
       .eq("session_id", id)
       .order("created_at", { ascending: true });
-    return (rows ?? []).map((r) => mapLead(r, { defaultSource: "auto-detected" }));
+    return (rows ?? []).map(
+      (r): Lead => ({
+        id: r.id as string,
+        name: (r.name as string) ?? "New lead",
+        address: (r.address as string) ?? "",
+        position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+        phone: (r.phone as string) ?? undefined,
+        email: (r.email as string) ?? undefined,
+        status: (r.status as Lead["status"]) ?? "new",
+        score: (r.score as number) ?? 50,
+        repId: (r.marketer_id as string) ?? "",
+        repName: "",
+        territory: (r.territory as string) ?? "",
+        capturedAt: (r.captured_at as string) ?? (r.created_at as string),
+        source: (r.source as Lead["source"]) ?? "auto-detected",
+        summary: (r.summary as string) ?? "",
+        transcriptSnippet: (r.transcript_snippet as string) ?? "",
+        tags: (r.tags as string[]) ?? [],
+      }),
+    );
   },
 
   /** Door pins for one session - the coverage map's `trail`. */
@@ -442,7 +443,16 @@ export const data = {
       .select("*")
       .eq("session_id", id)
       .order("at", { ascending: true });
-    return (rows ?? []).map(mapDoor);
+    return (rows ?? []).map(
+      (r): DoorPing => ({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+        outcome: (r.outcome as DoorOutcome) ?? "no-answer",
+        address: (r.address as string) ?? undefined,
+        note: (r.note as string) ?? undefined,
+      }),
+    );
   },
 
   /** All recent door pins across sessions - powers the team coverage map. */
@@ -454,7 +464,16 @@ export const data = {
       .select("*")
       .order("at", { ascending: false })
       .limit(limit);
-    return (rows ?? []).map(mapDoor);
+    return (rows ?? []).map(
+      (r): DoorPing => ({
+        id: r.id as string,
+        at: (r.at as string) ?? (r.created_at as string),
+        position: { lat: (r.lat as number) ?? 43.6532, lng: (r.lng as number) ?? -79.3832 },
+        outcome: (r.outcome as DoorOutcome) ?? "no-answer",
+        address: (r.address as string) ?? undefined,
+        note: (r.note as string) ?? undefined,
+      }),
+    );
   },
 
   /** Past (non-live) sessions, newest first - powers per-marketer history. */

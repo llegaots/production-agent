@@ -1,4 +1,4 @@
-import { after } from "next/server";
+import { after, type NextRequest } from "next/server";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
 import { detectAndStoreLeads, isLeadSpotterConfigured } from "@/lib/agent/lead-spotter";
 import { gradeSession, isSessionGraderConfigured } from "@/lib/agent/session-grader";
@@ -9,7 +9,7 @@ export const maxDuration = 120;
 /** Stop the running demo: end every live session now. The background playback
  *  notices the status flip and bows out; we run the final lead sweep + grading
  *  for each ended session (same as a natural end). */
-export async function POST() {
+export async function POST(_req: NextRequest) {
   if (!isSupabaseConfigured()) {
     return Response.json({ error: "Supabase is not configured." }, { status: 400 });
   }

@@ -42,17 +42,7 @@ export function GenerateRoutesDrawer({
   const [minPerDoor, setMinPerDoor] = useState(2);
   const [walkKmh, setWalkKmh] = useState(4.5);
   const [avoidDays, setAvoidDays] = useState(60);
-  const buildMState = () => {
-    const map: Record<string, MState> = {};
-    for (const rep of reps) {
-      const shift = shifts.find((s) => s.repId === rep.id && s.date === date);
-      map[rep.id] = shift
-        ? { included: true, start: shift.start, end: shift.end }
-        : { included: false, start: "16:00", end: "21:00" };
-    }
-    return map;
-  };
-  const [mstate, setMstate] = useState<Record<string, MState>>(buildMState);
+  const [mstate, setMstate] = useState<Record<string, MState>>({});
   const [phase, setPhase] = useState<Phase>("form");
   const [stage, setStage] = useState("");
   const [progress, setProgress] = useState(0);
@@ -60,26 +50,23 @@ export function GenerateRoutesDrawer({
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // rebuild the per-marketer map when the date changes or the drawer reopens, and
-  // reset the wizard whenever it opens, all without a synchronous effect
-  const [sync, setSync] = useState({ open, date });
-  if (sync.open !== open || sync.date !== date) {
-    const justOpened = open && !sync.open;
-    setSync({ open, date });
-    setMstate(buildMState());
-    if (justOpened) {
+  useEffect(() => {
+    const map: Record<string, MState> = {};
+    for (const rep of reps) {
+      const shift = shifts.find((s) => s.repId === rep.id && s.date === date);
+      map[rep.id] = shift
+        ? { included: true, start: shift.start, end: shift.end }
+        : { included: false, start: "16:00", end: "21:00" };
+    }
+    setMstate(map);
+  }, [date, reps, shifts, open]);
+
+  useEffect(() => {
+    if (open) {
       setPhase("form");
       setError("");
       setSummary("");
       setProgress(0);
-    }
-  }
-
-  // keep the poll timer tidy: stop it when the drawer closes or unmounts
-  useEffect(() => {
-    if (!open && pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
