@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODEL, anthropic } from "./client";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { geocodeArea } from "@/lib/geo/geocode";
 import { fetchAreaData } from "@/lib/geo/overpass";
@@ -58,8 +59,6 @@ interface Ctx {
   geoCache: GeoCache | null;
   summary: string;
 }
-
-const MODEL = "claude-opus-4-8";
 
 const SYSTEM = `You are RouteIQ's field route planner. You design door-to-door walking routes for a team working ONE session in a target area, then save them.
 
@@ -238,7 +237,7 @@ async function execute(name: string, input: unknown, ctx: Ctx, hooks: PlannerHoo
 }
 
 export async function runRoutePlanner(input: PlannerInput, hooks: PlannerHooks): Promise<PlannerResult> {
-  const client = new Anthropic();
+  const client = anthropic();
   const pace: PaceModel = { timePerDoorSec: input.timePerDoorSec, walkSpeedMps: input.walkSpeedMps };
   const ctx: Ctx = { input, pace, streets: [], homes: [], pastLines: [], preview: null, geoCache: null, summary: "" };
 

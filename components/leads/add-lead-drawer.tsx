@@ -9,19 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar } from "@/components/ui/avatar";
 import { LeadStatusBadge } from "@/components/ui/status";
+import { Field } from "@/components/ui/field";
 import { cn } from "@/lib/utils";
 import type { LeadStatus, Rep } from "@/lib/types";
 
 const STATUSES: LeadStatus[] = ["new", "qualified", "callback", "appointment", "won", "lost"];
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[12px] font-medium text-ink-soft">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 export function AddLeadDrawer({
   open,

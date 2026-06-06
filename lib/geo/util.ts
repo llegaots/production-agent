@@ -21,10 +21,6 @@ export function polylineLength(points: LatLng[]): number {
   return total;
 }
 
-export function segmentLength(seg: StreetSegment): number {
-  return polylineLength(seg.points);
-}
-
 export function midpoint(seg: StreetSegment): LatLng {
   const pts = seg.points;
   const m = pts[Math.floor(pts.length / 2)];
@@ -33,18 +29,6 @@ export function midpoint(seg: StreetSegment): LatLng {
 
 export function boundsCenter(b: GeoBounds): LatLng {
   return { lat: (b.minLat + b.maxLat) / 2, lng: (b.minLng + b.maxLng) / 2 };
-}
-
-/** Build a bounding box of the given radius (km) around a center point. */
-export function boundsFromCenter(center: LatLng, radiusKm: number): GeoBounds {
-  const latHalf = radiusKm / 111;
-  const lngHalf = radiusKm / (111 * Math.cos(rad(center.lat)) || 1);
-  return {
-    minLat: center.lat - latHalf,
-    maxLat: center.lat + latHalf,
-    minLng: center.lng - lngHalf,
-    maxLng: center.lng + lngHalf,
-  };
 }
 
 /** Clamp a bbox to a max span (km) around its center - keeps Overpass fast. */

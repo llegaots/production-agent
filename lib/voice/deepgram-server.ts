@@ -1,17 +1,6 @@
 import "server-only";
 import { DeepgramClient } from "@deepgram/sdk";
 
-/** Live STT connection params the browser uses to open the Deepgram WebSocket. */
-export const DEEPGRAM_LIVE_PARAMS = {
-  model: "nova-3",
-  language: "en",
-  interim_results: "true",
-  diarize: "true",
-  punctuate: "true",
-  smart_format: "true",
-  endpointing: "300",
-} as const;
-
 let _client: DeepgramClient | null = null;
 function client(): DeepgramClient {
   const apiKey = process.env.DEEPGRAM_API_KEY;

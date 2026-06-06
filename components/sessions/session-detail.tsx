@@ -25,6 +25,7 @@ import { DetectedLeads } from "./detected-leads";
 import { MetricStat } from "./metric-stat";
 import { fadeInUp, staggerContainer } from "@/lib/motion";
 import { formatDuration } from "@/lib/utils";
+import { useNow } from "@/lib/use-now";
 import type { AgentInsight, LatLng, Lead, Route, Session, TranscriptLine } from "@/lib/types";
 
 /** Renders a single live session. Live data (transcript / insights / leads /
@@ -49,8 +50,9 @@ export function SessionDetail({
   micLevel?: number;
   onEndSession?: () => void;
 }) {
+  const now = useNow();
   const firstName = session.repName.split(" ")[0];
-  const durationMin = (Date.now() - new Date(session.startedAt).getTime()) / 60000;
+  const durationMin = now ? (now.getTime() - new Date(session.startedAt).getTime()) / 60000 : 0;
   const answerRate = session.doors ? Math.round((session.conversations / session.doors) * 100) : 0;
 
   return (

@@ -1,9 +1,8 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODEL, anthropic } from "./client";
 import { planPreview, type GeoCache, type Steer } from "./preview";
 import type { RoutePreview } from "@/lib/types";
-
-const MODEL = "claude-opus-4-8";
 
 // Must match the colours the preview panel paints routes with (PALETTE order).
 const COLORS = ["green", "blue", "orange", "purple", "red", "teal", "pink", "lime"];
@@ -69,7 +68,7 @@ export async function refinePreview(
   current: RoutePreview,
   message: string,
 ): Promise<{ preview: RoutePreview; reply: string }> {
-  const client = new Anthropic();
+  const client = anthropic();
 
   const streetNames = [...new Set(cache.streets.map((s) => s.name).filter(Boolean))].slice(0, 60);
   const routeLines = current.routes

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, CalendarRange, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -17,6 +17,7 @@ import {
   timeToMinutes,
   minutesToHHMM,
 } from "@/lib/calendar";
+import { useNow } from "@/lib/use-now";
 import type { Rep, Route, Shift } from "@/lib/types";
 
 type View = "week" | "month";
@@ -33,16 +34,10 @@ export function ScheduleView({
   const [view, setView] = useState<View>("week");
   const [cursor, setCursor] = useState<Date>(() => new Date());
   const [shifts, setShifts] = useState<Shift[]>(initialShifts);
-  const [now, setNow] = useState<Date | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createDate, setCreateDate] = useState<string>(() => ymd(new Date()));
-
-  // set after mount → keeps SSR/CSR markup identical (no "today" flash mismatch)
-  useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(t);
-  }, []);
+  // null on the server and first client render (keeps markup identical), then ticks
+  const now = useNow();
 
   const days = weekDays(cursor);
   const label = view === "week" ? weekRangeLabel(days) : monthLabel(cursor);
