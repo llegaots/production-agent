@@ -52,28 +52,33 @@ function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
   const info = useRef<google.maps.InfoWindow | null>(null);
   const fitted = useRef(false);
 
-  // planned route (grey baseline when live; green when planning)
+  // planned route (grey baseline when live; green when planning). We recreate the
+  // polyline with the path in the CONSTRUCTOR on every change (same as the
+  // coverage map, which renders reliably). The path here is static-ish, so there
+  // is no choppiness concern (the live trace uses its own setPath polyline below).
   useEffect(() => {
     if (!map) return;
+    planned.current?.setMap(null);
+    planned.current = null;
+    endpoints.current.forEach((m) => m.setMap(null));
+    endpoints.current = [];
     if (path && path.length > 1) {
-      if (!planned.current) planned.current = new google.maps.Polyline({ map, geodesic: true, zIndex: 1 });
-      planned.current.setOptions({
+      const color = mutePath ? "#c2ccc7" : "#059e6e";
+      planned.current = new google.maps.Polyline({
         path,
-        strokeColor: mutePath ? "#c2ccc7" : "#059e6e",
-        strokeOpacity: mutePath ? 1 : 0.9,
-        strokeWeight: mutePath ? 6 : 4,
+        map,
+        geodesic: true,
+        strokeColor: color,
+        strokeOpacity: mutePath ? 1 : 0.95,
+        strokeWeight: mutePath ? 6 : 4.5,
+        zIndex: 1,
       });
-      endpoints.current.forEach((m) => m.setMap(null));
-      endpoints.current = [];
       if (!mutePath) {
         const last = path[path.length - 1];
         const same = Math.abs(path[0].lat - last.lat) < 1e-6 && Math.abs(path[0].lng - last.lng) < 1e-6;
         endpoints.current.push(endpointMarker(map, path[0], "S", "#059e6e", same ? "Start / End" : "Start"));
         if (!same) endpoints.current.push(endpointMarker(map, last, "E", "#0d1713", "End"));
       }
-    } else if (planned.current) {
-      planned.current.setMap(null);
-      planned.current = null;
     }
   }, [map, path, mutePath]);
 

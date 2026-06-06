@@ -30,8 +30,10 @@ export interface Steer {
   focusStreets?: string[];
   /** nudge the whole area toward a compass direction */
   focusDirection?: "north" | "south" | "east" | "west" | "center";
-  /** scale every route's size (e.g. 1.3 = ~30% bigger, 0.7 = smaller) */
+  /** scale EVERY route's size (e.g. 1.3 = ~30% bigger, 0.7 = smaller) */
   sizeFactor?: number;
+  /** scale ONE route independently, keyed by 0-based route index */
+  routeSizeFactors?: Record<number, number>;
 }
 
 const norm = (s: string) => s.toLowerCase().trim();
@@ -77,9 +79,15 @@ export function planPreview(cache: GeoCache, steer: Steer = {}): { routes: Previ
   const focusPt = steer.focusStreets?.length ? midpointOfStreets(cache.streets, steer.focusStreets) : null;
   const center = focusPt ?? shiftCenter(cache.center, cache.bounds, steer.focusDirection);
 
-  // 3. scale budgets (bigger / smaller routes)
-  const factor = steer.sizeFactor && steer.sizeFactor > 0 ? Math.min(3, Math.max(0.3, steer.sizeFactor)) : 1;
-  const budgets = cache.budgetsBaseSec.map((b) => b * factor);
+  // 3. scale budgets - a per-route factor overrides the global one, so a single
+  //    route can be grown/shrunk independently.
+  const clampF = (f: number) => Math.min(3, Math.max(0.3, f));
+  const globalF = steer.sizeFactor && steer.sizeFactor > 0 ? clampF(steer.sizeFactor) : 1;
+  const budgets = cache.budgetsBaseSec.map((b, i) => {
+    const per = steer.routeSizeFactors?.[i];
+    const f = per != null && per > 0 ? clampF(per) : globalF;
+    return b * f;
+  });
 
   const peoplePerGroup = cache.groups.map((ids) => ids.length);
   const { zones, totalHomes } = planCoverage(streets, cache.homes, center, budgets, cache.pace, peoplePerGroup);
