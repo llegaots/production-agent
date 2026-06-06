@@ -37,11 +37,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Don't pile a second demo on top of reps already live.
-  const { data: liveRows } = await db.from("D2D_Sessions").select("id").eq("status", "live").limit(1);
-  if (liveRows?.length) {
+  // Reap orphaned live sessions first: a previous demo whose background playback
+  // loop died (typically a dev-server restart) leaves sessions stuck at 'live'
+  // forever, which would otherwise block every future demo. A healthy demo
+  // auto-ends at ~maxMs (10 min), so anything still live past that window is
+  // certainly orphaned and safe to close. Genuinely-recent live reps still block
+  // (the 409 below), so we never stomp an actually-running demo.
+  const STALE_AFTER_MS = 11 * 60 * 1000;
+  const { data: liveRows } = await db
+    .from("D2D_Sessions")
+    .select("id,marketer_id,started_at")
+    .eq("status", "live");
+  const liveSessions = liveRows ?? [];
+  const staleCutoff = Date.now() - STALE_AFTER_MS;
+  const stale = liveSessions.filter((s) => new Date(s.started_at as string).getTime() < staleCutoff);
+  const fresh = liveSessions.filter((s) => new Date(s.started_at as string).getTime() >= staleCutoff);
+  if (stale.length) {
+    const now = new Date().toISOString();
+    for (const s of stale) {
+      await db.from("D2D_Sessions").update({ status: "completed", ended_at: now }).eq("id", s.id as string);
+      if (s.marketer_id) await db.from("D2D_Marketers").update({ status: "offline" }).eq("id", s.marketer_id as string);
+    }
+  }
+  if (fresh.length) {
     return Response.json(
-      { error: "Reps are already live. End the current sessions before starting a new demo." },
+      { error: "Reps are already live. Press Stop demo to end them before starting a new one." },
       { status: 409 },
     );
   }

@@ -382,8 +382,11 @@ function buildLoopResult(
   pace: PaceModel,
   people: number,
 ): LoopResult {
-  // defer long cul-de-sacs, then cover the rest as an open minimal-repeat trail
-  const keptEdges = pruneLongSpurs(g, zoneEdges);
+  // defer long cul-de-sacs, then cover the rest as an open minimal-repeat trail.
+  // If pruning would strip a small zone to nothing, keep it unpruned - a short
+  // route beats an empty one (this is what dropped tiny/over-trimmed zones).
+  const pruned = pruneLongSpurs(g, zoneEdges);
+  const keptEdges = pruned.length ? pruned : zoneEdges;
   const { path } = coverTrail(g, keptEdges, meet);
   const loopMeters = polylineLength(path);
   const doors = Math.round(keptEdges.reduce((a, ei) => a + hpe[ei], 0)); // covered streets only
@@ -392,9 +395,13 @@ function buildLoopResult(
   return { path, loopMeters, doors, minutes, keptEdges };
 }
 
-/** Trim a zone (dropping its most peripheral streets) until its ACTUAL loop
- *  walk + knock time fits the session budget. This is what enforces realistic
- *  sizing regardless of how much the loop has to retrace. */
+/** Size a zone to the session budget by keeping the LARGEST core of streets,
+ *  nearest the meet point outward, whose ACTUAL covering-trail (walk + knock)
+ *  time fits the budget. We binary-search the cut so we use as much of the
+ *  session as possible (no tiny routes) without overshooting, and we always keep
+ *  a usable core (never drop the zone). Replaces an older chunked farthest-first
+ *  trim that overshot wildly - shrinking a full zone to a sliver and sometimes
+ *  collapsing the second pair's zone to nothing. */
 function fitZoneToBudget(
   g: StreetGraph,
   zoneEdges: number[],
@@ -404,17 +411,32 @@ function fitZoneToBudget(
   pace: PaceModel,
   people: number,
 ): { edges: number[] } & LoopResult {
-  let edges = [...zoneEdges];
-  let res = buildLoopResult(g, edges, meet, hpe, pace, people);
-  let iter = 0;
-  while (res.minutes * 60 > budgetSec * 1.05 && edges.length > 4 && iter++ < 60) {
-    const overage = (res.minutes * 60) / budgetSec;
-    const removeCount = Math.max(1, Math.floor(edges.length * Math.min(0.4, (overage - 1) * 0.6)));
-    edges.sort((a, b) => d2(edgeMid(g, b), meet) - d2(edgeMid(g, a), meet)); // farthest first
-    edges = edges.slice(removeCount);
-    res = buildLoopResult(g, edges, meet, hpe, pace, people);
+  // Streets ordered compactly from the meet outward; we pack them in greedily.
+  const sorted = [...zoneEdges].sort((a, b) => d2(edgeMid(g, a), meet) - d2(edgeMid(g, b), meet));
+  const cap = budgetSec * 1.1; // a route may run a touch over a full session
+  const minKeep = Math.min(sorted.length, 4);
+
+  // Greedily add streets nearest-first; keep one whenever it still fits the
+  // session, otherwise skip it and try the next (so one oversized street near the
+  // edge doesn't stop us from filling the rest of the session). Stop once we've
+  // essentially filled the budget, so the zone stays tight around the meet.
+  let kept: number[] = [];
+  let res = buildLoopResult(g, kept, meet, hpe, pace, people);
+  for (const e of sorted) {
+    const trial = [...kept, e];
+    const r = buildLoopResult(g, trial, meet, hpe, pace, people);
+    if (r.minutes * 60 <= cap) {
+      kept = trial;
+      res = r;
+      if (kept.length >= minKeep && r.minutes * 60 >= budgetSec * 0.95) break; // budget filled
+    }
   }
-  return { edges, ...res };
+  // Never return an empty/degenerate zone - keep a small nearest core at minimum.
+  if (kept.length < minKeep) {
+    kept = sorted.slice(0, minKeep);
+    res = buildLoopResult(g, kept, meet, hpe, pace, people);
+  }
+  return { edges: kept, ...res };
 }
 
 export function planCoverage(

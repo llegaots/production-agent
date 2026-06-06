@@ -36,10 +36,11 @@ function endpointMarker(map: google.maps.Map, position: LatLng, text: string, co
   });
 }
 
-/* Overlays are kept as persistent objects and UPDATED in place on each change
-   (setPath / setPosition), instead of being torn down and rebuilt. The camera is
-   fit to the geometry exactly ONCE, so the user can freely zoom/pan without it
-   snapping back on the next GPS tick. */
+/* The line overlays (planned route + walked breadcrumb) are rebuilt with their path
+   in the constructor whenever the data changes - the pattern that draws reliably.
+   The marker overlays (live dot, door pins) are persistent and moved in place to
+   avoid flicker. The camera is fit to the geometry exactly ONCE, so the user can
+   freely zoom/pan without it snapping back on the next GPS tick. */
 function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
   const map = useMap();
   const planned = useRef<google.maps.Polyline | null>(null);
@@ -82,20 +83,29 @@ function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
     }
   }, [map, path, mutePath]);
 
-  // walked breadcrumb — grows by updating the same polyline's path (smooth)
+  // walked breadcrumb — the rep's actual GPS trace. Recreated on each growth tick
+  // with the path set in the CONSTRUCTOR (same as the planned route + coverage map,
+  // which render reliably) instead of building an empty polyline then setPath'ing it.
+  // Recreating a polyline is cheap and seamless; the start marker is placed once.
   useEffect(() => {
     if (!map) return;
-    if (breadcrumb && breadcrumb.length > 1) {
-      if (!crumb.current)
-        crumb.current = new google.maps.Polyline({ map, geodesic: true, strokeColor: "#059e6e", strokeOpacity: 1, strokeWeight: 5, zIndex: 3 });
-      crumb.current.setPath(breadcrumb);
-      if (!startMk.current) startMk.current = endpointMarker(map, breadcrumb[0], "S", "#059e6e", "Started here");
-    } else if (crumb.current) {
-      crumb.current.setMap(null);
-      crumb.current = null;
+    crumb.current?.setMap(null);
+    crumb.current = null;
+    if (!breadcrumb || breadcrumb.length < 2) {
       startMk.current?.setMap(null);
       startMk.current = null;
+      return;
     }
+    crumb.current = new google.maps.Polyline({
+      path: breadcrumb,
+      map,
+      geodesic: true,
+      strokeColor: "#059e6e",
+      strokeOpacity: 1,
+      strokeWeight: 5,
+      zIndex: 3,
+    });
+    if (!startMk.current) startMk.current = endpointMarker(map, breadcrumb[0], "S", "#059e6e", "Started here");
   }, [map, breadcrumb]);
 
   // door pins — only ADD markers for newly-seen doors (existing ones stay put)
