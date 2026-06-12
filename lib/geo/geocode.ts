@@ -1,4 +1,4 @@
-import type { LatLng } from "@/lib/types";
+import type { AddressConfidence, LatLng } from "@/lib/types";
 import type { GeocodeResult } from "./types";
 
 type GeoJson =
@@ -79,22 +79,78 @@ export async function geocodeArea(input: string): Promise<GeocodeResult> {
 }
 
 /**
- * Reverse-geocode a GPS point to a street address using Nominatim (free, no key).
- * Returns a concise "123 Main St, City" string, or null if nothing resolves.
+ * Reverse-geocode a GPS point to the nearest home: its street address, the
+ * building coordinate, and how much to trust it. Prefers Google Geocoding (best
+ * Canadian house-number coverage + a ROOFTOP/interpolated quality flag) and
+ * falls back to Nominatim when no Google key is set, so dev still works.
  */
 export interface ReverseResult {
-  /** "211 Sunny St, Baie-D'Urfe" style label */
+  /** "211 Sunny St, Baie-D'Urfe" style label, or null when nothing house-level resolves */
   address: string | null;
-  /** the matched home/building's own coordinate (snapped off the road) */
+  /** the resolved building coordinate (caller decides whether to snap to it) */
   lat: number;
   lng: number;
+  /** how trustworthy the match is */
+  confidence: AddressConfidence;
+  source: "google" | "nominatim";
   /** true when the match resolved to a specific house number */
   exact: boolean;
 }
 
-/** Reverse-geocode a GPS point to the nearest home: its address AND the home's
- *  own coordinate, so a door pin lands on the house rather than the road. */
-export async function reverseGeocodeDetailed(lat: number, lng: number): Promise<ReverseResult | null> {
+const GOOGLE_GEOCODING_KEY = process.env.GOOGLE_GEOCODING_API_KEY;
+
+/** Google's `location_type` -> our trust level. */
+function googleConfidence(locationType: string): AddressConfidence {
+  if (locationType === "ROOFTOP") return "rooftop";
+  if (locationType === "RANGE_INTERPOLATED") return "interpolated";
+  return "gps-only"; // GEOMETRIC_CENTER / APPROXIMATE - too coarse to be a house
+}
+
+interface GoogleComponent {
+  long_name: string;
+  types: string[];
+}
+interface GoogleResult {
+  formatted_address: string;
+  address_components: GoogleComponent[];
+  geometry: { location: { lat: number; lng: number }; location_type: string };
+}
+
+async function googleReverse(lat: number, lng: number): Promise<ReverseResult | null> {
+  if (!GOOGLE_GEOCODING_KEY) return null;
+  const url =
+    `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}` +
+    `&result_type=street_address|premise|subpremise&key=${GOOGLE_GEOCODING_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const j = (await res.json()) as { status: string; results?: GoogleResult[] };
+  // No house-level address nearby: keep the GPS point, mark it unresolved.
+  if (j.status === "ZERO_RESULTS") {
+    return { address: null, lat, lng, confidence: "gps-only", source: "google", exact: false };
+  }
+  if (j.status !== "OK" || !j.results?.length) return null;
+
+  const pick =
+    j.results.find((r) => r.address_components.some((c) => c.types.includes("street_number"))) ??
+    j.results[0];
+  const comp = (type: string) =>
+    pick.address_components.find((c) => c.types.includes(type))?.long_name;
+  const streetNo = comp("street_number");
+  const route = comp("route");
+  const city = comp("locality") ?? comp("sublocality") ?? comp("administrative_area_level_2");
+  const street = [streetNo, route].filter(Boolean).join(" ");
+  const address = [street || route, city].filter(Boolean).join(", ") || pick.formatted_address || null;
+  return {
+    address,
+    lat: pick.geometry.location.lat,
+    lng: pick.geometry.location.lng,
+    confidence: googleConfidence(pick.geometry.location_type),
+    source: "google",
+    exact: Boolean(streetNo),
+  };
+}
+
+async function nominatimReverse(lat: number, lng: number): Promise<ReverseResult | null> {
   try {
     const url =
       `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1` +
@@ -122,11 +178,23 @@ export async function reverseGeocodeDetailed(lat: number, lng: number): Promise<
       address: parts.length ? parts.join(", ") : (j.display_name ?? null),
       lat: Number.isFinite(snapLat) ? snapLat : lat,
       lng: Number.isFinite(snapLng) ? snapLng : lng,
+      // OSM address nodes aren't guaranteed rooftop, so never claim more than interpolated.
+      confidence: a.house_number ? "interpolated" : "gps-only",
+      source: "nominatim",
       exact: Boolean(a.house_number),
     };
   } catch {
     return null;
   }
+}
+
+/** Reverse-geocode a GPS point: Google first (rooftop + confidence), Nominatim fallback. */
+export async function reverseGeocodeDetailed(lat: number, lng: number): Promise<ReverseResult | null> {
+  if (GOOGLE_GEOCODING_KEY) {
+    const g = await googleReverse(lat, lng);
+    if (g) return g;
+  }
+  return nominatimReverse(lat, lng);
 }
 
 export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {

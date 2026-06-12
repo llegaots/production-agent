@@ -4,7 +4,7 @@ import { haversine } from "@/lib/geo/util";
 
 export const runtime = "nodejs";
 
-const MIN_STEP_M = 8; // only append a trail point after moving this far
+const MIN_STEP_M = 5; // only append a trail point after moving this far (denser = fewer cut corners)
 const MAX_TRAIL = 1500; // cap the stored trail length
 
 /** Update the rep's live GPS position, and (best-effort) append it to the

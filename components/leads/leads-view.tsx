@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search, Plus, Table2, Columns3 } from "lucide-react";
+import { Search, Plus, Table2, Columns3, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { LeadsTable } from "./leads-table";
@@ -12,7 +12,10 @@ import { cn } from "@/lib/utils";
 import type { Lead, LeadStatus, Rep } from "@/lib/types";
 
 type View = "table" | "board";
-type Filter = "all" | LeadStatus;
+type Filter = "all" | LeadStatus | "needs-check";
+
+/** Fully-automatic captures we are not yet sure of: not rooftop and not confirmed. */
+const needsCheck = (l: Lead) => !l.addressVerified && l.addressConfidence !== "rooftop";
 
 const filters: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
@@ -43,7 +46,11 @@ export function LeadsView({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return leads.filter((l) => {
-      if (filter !== "all" && l.status !== filter) return false;
+      if (filter === "needs-check") {
+        if (!needsCheck(l)) return false;
+      } else if (filter !== "all" && l.status !== filter) {
+        return false;
+      }
       if (!q) return true;
       return (
         l.name.toLowerCase().includes(q) ||
@@ -89,6 +96,32 @@ export function LeadsView({
               </button>
             );
           })}
+          {(() => {
+            const n = leads.filter(needsCheck).length;
+            if (!n) return null;
+            const active = filter === "needs-check";
+            return (
+              <button
+                onClick={() => setFilter("needs-check")}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors",
+                  active
+                    ? "bg-[#be123c] text-white"
+                    : "border border-rose-200 bg-rose-50 text-[#be123c] hover:bg-rose-100",
+                )}
+              >
+                <AlertTriangle className="size-3.5" /> Needs address check
+                <span
+                  className={cn(
+                    "nums rounded-full px-1.5 text-[11px] font-bold",
+                    active ? "bg-white/20" : "bg-white text-[#be123c]",
+                  )}
+                >
+                  {n}
+                </span>
+              </button>
+            );
+          })()}
         </div>
 
         <div className="flex items-center gap-2">

@@ -16,6 +16,8 @@ const MAX_ACCURACY_M = 60; // ignore very noisy fixes
 export interface DoorVisit {
   lat: number;
   lng: number;
+  /** reported accuracy (meters) of the chosen fix - lower is better */
+  accuracyM?: number;
   startedAt: string;
   endedAt: string;
 }
@@ -38,6 +40,22 @@ function metersBetween(aLat: number, aLng: number, bLat: number, bLng: number): 
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+type Fix = { lat: number; lng: number; acc: number };
+
+/** Best position from a set of stationary fixes: the median of the most-accurate
+ *  half (robust to GPS drift and outliers), reported with the tightest accuracy. */
+function bestFix(fixes: Fix[]): Fix | null {
+  if (!fixes.length) return null;
+  const sorted = [...fixes].sort((a, b) => a.acc - b.acc);
+  const keep = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 2)));
+  const median = (vals: number[]) => {
+    const s = [...vals].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+  return { lat: median(keep.map((f) => f.lat)), lng: median(keep.map((f) => f.lng)), acc: keep[0].acc };
+}
+
 export class DwellTracker {
   private opts: DwellOptions;
   private watchId: number | null = null;
@@ -47,6 +65,8 @@ export class DwellTracker {
   private doorAnchor: { lat: number; lng: number } | null = null;
   private doorStartedAt = "";
   private paused = false;
+  /** GPS fixes gathered while parked at the current spot - we keep the best one */
+  private dwellFixes: Fix[] = [];
 
   constructor(opts: DwellOptions) {
     this.opts = opts;
@@ -70,15 +90,22 @@ export class DwellTracker {
 
   /** Close any door currently open (call when the session ends). */
   flush(): void {
-    if (this.doorOpen && this.doorAnchor) {
-      this.opts.onDoorClose?.({
-        lat: this.doorAnchor.lat,
-        lng: this.doorAnchor.lng,
-        startedAt: this.doorStartedAt,
-        endedAt: new Date().toISOString(),
-      });
-      this.doorOpen = false;
-    }
+    this.emitDoorClose();
+  }
+
+  /** Emit the open door's visit using the best of the fixes gathered while parked. */
+  private emitDoorClose(): void {
+    if (!this.doorOpen || !this.doorAnchor) return;
+    const best = bestFix(this.dwellFixes) ?? { lat: this.doorAnchor.lat, lng: this.doorAnchor.lng, acc: 0 };
+    this.opts.onDoorClose?.({
+      lat: best.lat,
+      lng: best.lng,
+      accuracyM: best.acc,
+      startedAt: this.doorStartedAt,
+      endedAt: new Date().toISOString(),
+    });
+    this.doorOpen = false;
+    this.doorAnchor = null;
   }
 
   stop(): void {
@@ -91,19 +118,24 @@ export class DwellTracker {
     if (this.paused) return;
     const { latitude: lat, longitude: lng, accuracy } = pos.coords;
     if (accuracy && accuracy > MAX_ACCURACY_M) return; // too noisy to trust
-    this.opts.onPosition?.(lat, lng, accuracy ?? 0);
+    const acc = accuracy ?? MAX_ACCURACY_M;
+    this.opts.onPosition?.(lat, lng, acc);
 
     const now = Date.now();
     if (!this.anchor) {
       this.anchor = { lat, lng };
       this.anchorSince = now;
+      this.dwellFixes = [{ lat, lng, acc }];
       return;
     }
 
     const fromAnchor = metersBetween(this.anchor.lat, this.anchor.lng, lat, lng);
 
     if (fromAnchor <= STATIONARY_RADIUS_M) {
-      // Still parked near the anchor - open a door once we've dwelled long enough.
+      // Still parked near the anchor - collect fixes so we can pick the best one,
+      // and open a door once we've dwelled long enough.
+      this.dwellFixes.push({ lat, lng, acc });
+      if (this.dwellFixes.length > 80) this.dwellFixes.shift();
       if (!this.doorOpen && now - this.anchorSince >= DWELL_MS) {
         this.doorOpen = true;
         this.doorAnchor = { ...this.anchor };
@@ -113,26 +145,20 @@ export class DwellTracker {
       return;
     }
 
-    // Moved. If a door was open and we've walked away, close it.
+    // Moved. If a door was open and we've walked away, close it (best fix wins).
     if (this.doorOpen && this.doorAnchor) {
       const fromDoor = metersBetween(this.doorAnchor.lat, this.doorAnchor.lng, lat, lng);
       if (fromDoor > MOVE_AWAY_M) {
-        this.opts.onDoorClose?.({
-          lat: this.doorAnchor.lat,
-          lng: this.doorAnchor.lng,
-          startedAt: this.doorStartedAt,
-          endedAt: new Date().toISOString(),
-        });
-        this.doorOpen = false;
-        this.doorAnchor = null;
+        this.emitDoorClose();
       } else {
         // drifted but still within the door's radius - keep the visit open
         return;
       }
     }
 
-    // Re-anchor at the new spot.
+    // Re-anchor at the new spot, starting a fresh fix buffer.
     this.anchor = { lat, lng };
     this.anchorSince = now;
+    this.dwellFixes = [{ lat, lng, acc }];
   }
 }

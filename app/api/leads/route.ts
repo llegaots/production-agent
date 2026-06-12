@@ -48,3 +48,33 @@ export async function POST(req: NextRequest) {
   }
   return Response.json({ id: data.id });
 }
+
+/** Update a lead. Editing the address marks it verified, clearing the CRM
+ *  "needs address check" flag for fully-automatic captures. */
+export async function PATCH(req: NextRequest) {
+  if (!isSupabaseConfigured()) {
+    return Response.json({ error: "Supabase is not configured (.env.local)." }, { status: 400 });
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const id = body.id ? String(body.id) : "";
+  if (!id) return Response.json({ error: "id is required." }, { status: 400 });
+
+  const patch: Record<string, unknown> = {};
+  if (typeof body.address === "string") {
+    patch.address = body.address.trim() || null;
+    patch.address_verified = true;
+  }
+  if (typeof body.status === "string" && STATUSES.includes(body.status)) patch.status = body.status;
+  if (typeof body.addressVerified === "boolean") patch.address_verified = body.addressVerified;
+  if (!Object.keys(patch).length) return Response.json({ error: "Nothing to update." }, { status: 400 });
+
+  const db = supabaseAdmin();
+  const { error } = await db.from("D2D_Leads").update(patch).eq("id", id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true });
+}
