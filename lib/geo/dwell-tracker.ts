@@ -22,9 +22,18 @@ export interface DoorVisit {
   endedAt: string;
 }
 
+export interface DoorOpenFix {
+  lat: number;
+  lng: number;
+  accuracyM?: number;
+  startedAt: string;
+}
+
 export interface DwellOptions {
   onPosition?: (lat: number, lng: number, accuracy: number) => void;
-  onDoorOpen?: () => void;
+  /** fires the moment a dwell begins, with the best fix gathered so far - the
+   *  caller can resolve the home's address while the rep is still standing there */
+  onDoorOpen?: (open: DoorOpenFix) => void;
   onDoorClose?: (door: DoorVisit) => void;
   onError?: (message: string) => void;
 }
@@ -140,7 +149,13 @@ export class DwellTracker {
         this.doorOpen = true;
         this.doorAnchor = { ...this.anchor };
         this.doorStartedAt = new Date(this.anchorSince).toISOString();
-        this.opts.onDoorOpen?.();
+        const best = bestFix(this.dwellFixes) ?? { lat: this.anchor.lat, lng: this.anchor.lng, acc: 0 };
+        this.opts.onDoorOpen?.({
+          lat: best.lat,
+          lng: best.lng,
+          accuracyM: best.acc,
+          startedAt: this.doorStartedAt,
+        });
       }
       return;
     }

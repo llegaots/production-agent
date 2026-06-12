@@ -19,16 +19,9 @@ const mapStyles: google.maps.MapTypeStyle[] = [
 
 const DEFAULT_CENTER: LatLng = { lat: 45.4275, lng: -73.8651 };
 
-/** First house number in an address string, for the agree/disagree banner. */
-function houseNumber(address: string | null | undefined): string | null {
-  if (!address) return null;
-  const m = address.match(/\d+/);
-  return m ? m[0] : null;
-}
-
-/* Imperative overlays: dropped pin, candidate footprints (white), the matched
-   footprint (green), and where today's pipeline would snap the pin (amber).
-   Rebuilt per result, same pattern as the other map layers in the app. */
+/* Imperative overlays: dropped pin, the matched footprint (green), and where
+   today's pipeline would snap the pin (amber). Rebuilt per result, same
+   pattern as the other map layers in the app. */
 function Overlays({ pin, result }: { pin: LatLng | null; result: ParcelLocateResponse | null }) {
   const map = useMap();
   const objects = useRef<{ setMap: (m: google.maps.Map | null) => void }[]>([]);
@@ -44,22 +37,6 @@ function Overlays({ pin, result }: { pin: LatLng | null; result: ParcelLocateRes
       );
     }
     if (result) {
-      result.candidates.forEach((c) => {
-        if (result.parcel && c.ring === result.parcel.ring) return;
-        objects.current.push(
-          new google.maps.Polygon({
-            paths: c.ring,
-            map,
-            strokeColor: "#ffffff",
-            strokeOpacity: 0.8,
-            strokeWeight: 1.2,
-            fillColor: "#ffffff",
-            fillOpacity: 0.06,
-            clickable: false,
-            zIndex: 10,
-          }),
-        );
-      });
       if (result.parcel) {
         objects.current.push(
           new google.maps.Polygon({
@@ -72,24 +49,6 @@ function Overlays({ pin, result }: { pin: LatLng | null; result: ParcelLocateRes
             fillOpacity: 0.25,
             clickable: false,
             zIndex: 20,
-          }),
-        );
-      }
-      if (result.current?.snapped) {
-        objects.current.push(
-          new google.maps.Marker({
-            position: result.current.snapped,
-            map,
-            zIndex: 50,
-            title: "Where today's pipeline snaps the pin",
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              scale: 7,
-              fillColor: "#f59e0b",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2,
-            },
           }),
         );
       }
@@ -206,10 +165,7 @@ export function ParcelLab() {
     );
   }
 
-  const parcelNum = houseNumber(result?.parcel?.address);
-  const currentNum = houseNumber(result?.current?.address);
-  const verdict =
-    result && parcelNum && currentNum ? (parcelNum === currentNum ? "agree" : "disagree") : null;
+  const verdict = result?.verdict ?? null;
 
   return (
     <div className="flex flex-col gap-4 xl:flex-row">
@@ -250,7 +206,7 @@ export function ParcelLab() {
       <div className="flex w-full flex-col gap-3 xl:w-[360px]">
         {loading && (
           <div className="flex items-center gap-2 rounded-xl border border-line bg-surface p-3 text-[13px] text-ink-soft">
-            <Loader2 className="size-4 animate-spin" /> Resolving address three ways...
+            <Loader2 className="size-4 animate-spin" /> Resolving the home at that pin...
           </div>
         )}
         {error && (
@@ -262,14 +218,16 @@ export function ParcelLab() {
           <div
             className={cn(
               "rounded-xl p-3 text-[13px] font-semibold",
-              verdict === "agree"
-                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border border-rose-200 bg-rose-50 text-rose-700",
+              verdict === "agree" && "border border-emerald-200 bg-emerald-50 text-emerald-700",
+              verdict === "alias" && "border border-sky-200 bg-sky-50 text-sky-700",
+              verdict === "conflict" && "border border-rose-200 bg-rose-50 text-rose-700",
             )}
           >
-            {verdict === "agree"
-              ? "All methods agree on the house number."
-              : "Methods disagree: today's pipeline would record a DIFFERENT house than the parcel match."}
+            {verdict === "agree" && "Both methods agree on the house number."}
+            {verdict === "alias" &&
+              "Two address records, one physical home: both addresses geocode to the same spot (duplicate municipal data). Not a real conflict."}
+            {verdict === "conflict" &&
+              "Methods point at DIFFERENT buildings. In production this door would be flagged unverified for a later signal to settle."}
           </div>
         )}
         {result && (
@@ -309,33 +267,14 @@ export function ParcelLab() {
                   : "Google Geocoding API key not configured or no result."
               }
             />
-            <MethodRow
-              label="Today's pipeline (Nominatim + 60 m snap)"
-              tone="amber"
-              address={result.current?.address ?? null}
-              meta={
-                result.current
-                  ? result.current.snapped
-                    ? `Pin snapped ${result.current.snapDistanceM} m to the amber dot.`
-                    : "No snap within 60 m, raw GPS kept."
-                  : "Nominatim returned nothing for this point."
-              }
-              sub={
-                result.current
-                  ? result.current.exact
-                    ? "Resolved to an exact house number."
-                    : "Street-level only: no house number resolved."
-                  : null
-              }
-            />
           </>
         )}
         {!result && !loading && !error && (
           <div className="rounded-xl border border-dashed border-line bg-surface-muted p-4 text-[13px] leading-relaxed text-muted">
             Drop a pin where a rep would actually stand (a porch, a driveway, the
             sidewalk in front of a house). The green polygon is the building the
-            parcel method picks, the amber dot is where today's pipeline would
-            snap the pin. Compare the addresses side by side.
+            parcel method picks; compare its address against the Google rooftop
+            answer below.
           </div>
         )}
       </div>

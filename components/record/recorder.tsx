@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { MicWave } from "@/components/sessions/mic-wave";
 import { cn } from "@/lib/utils";
 import { LiveCapture, type CaptureStatus, type FinalLine } from "@/lib/voice/deepgram-live";
-import { DwellTracker, type DoorVisit } from "@/lib/geo/dwell-tracker";
+import { DwellTracker, type DoorOpenFix, type DoorVisit } from "@/lib/geo/dwell-tracker";
 
 const FLUSH_MS = 1200; // debounce window for batching finalized lines to the server
 const DISPLAY_CAP = 250; // keep the on-device transcript light over long shifts
@@ -65,6 +65,7 @@ export function Recorder({
   const trackerRef = useRef<DwellTracker | null>(null);
   const lastSeqRef = useRef(-1); // seq of the most recent finalized transcript line
   const doorFromSeqRef = useRef(0); // first transcript seq belonging to the open door
+  const doorIdRef = useRef<string | null>(null); // client-generated id of the open door
   const lastPosPostRef = useRef(0);
 
   // ── transcript persistence ──────────────────────────────────────────────────
@@ -122,15 +123,45 @@ export function Recorder({
     [sessionId],
   );
 
+  // Fired the moment the dwell begins: open the door server-side so its address
+  // is resolved while the rep is still standing at the home. Fire-and-forget
+  // with a client-generated id - the close upserts by the same id, so a lost
+  // response (or a failed open) can never duplicate or orphan a door.
+  const postDoorOpen = useCallback(
+    (open: DoorOpenFix) => {
+      doorFromSeqRef.current = lastSeqRef.current + 1;
+      doorIdRef.current = crypto.randomUUID();
+      void fetch(`/api/sessions/${sessionId}/doors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({
+          phase: "open",
+          id: doorIdRef.current,
+          lat: open.lat,
+          lng: open.lng,
+          accuracyM: open.accuracyM,
+          fromSeq: doorFromSeqRef.current,
+          at: open.startedAt,
+        }),
+      }).catch(() => {});
+    },
+    [sessionId],
+  );
+
   const postDoor = useCallback(
     async (door: DoorVisit) => {
       const durationMs = new Date(door.endedAt).getTime() - new Date(door.startedAt).getTime();
+      const id = doorIdRef.current;
+      doorIdRef.current = null;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/doors`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           keepalive: true,
           body: JSON.stringify({
+            phase: "close",
+            ...(id ? { id } : {}),
             lat: door.lat,
             lng: door.lng,
             accuracyM: door.accuracyM,
@@ -140,9 +171,13 @@ export function Recorder({
             at: door.startedAt,
           }),
         });
-        const j = (await res.json().catch(() => ({}))) as { id?: string; outcome?: string };
+        const j = (await res.json().catch(() => ({}))) as {
+          id?: string;
+          outcome?: string;
+          skipped?: string;
+        };
         // Offer a quick undo (a street pause can still look like a door).
-        if (res.ok && j.id) {
+        if (res.ok && j.id && !j.skipped) {
           setLastPin({ id: j.id, outcome: j.outcome ?? "no-answer" });
           if (pinTimer.current) window.clearTimeout(pinTimer.current);
           pinTimer.current = window.setTimeout(() => setLastPin(null), 7000);
@@ -241,9 +276,7 @@ export function Recorder({
       // recording + transcript still work, just without the map pins.
       const tracker = new DwellTracker({
         onPosition: (lat, lng) => postPosition(lat, lng),
-        onDoorOpen: () => {
-          doorFromSeqRef.current = lastSeqRef.current + 1;
-        },
+        onDoorOpen: (open) => postDoorOpen(open),
         onDoorClose: (door) => postDoor(door),
         onError: () => {},
       });

@@ -1,16 +1,21 @@
-import type { NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
-import { classifyDoor } from "@/lib/agent/door-classifier";
-import { reverseGeocodeDetailed } from "@/lib/geo/geocode";
-import { haversine } from "@/lib/geo/util";
+import { closeDoor, resolvePin } from "@/lib/agent/close-door";
+import { footprintCheck } from "@/lib/geo/footprint-check";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/** Record a door the rep dwelled at. The client (recorder) detects the dwell via
- *  GPS and posts the location + the transcript seq-range covering the visit; we
- *  pull those lines, classify the outcome, store the pin, and update counters.
- *  The INSERT streams the pin onto the manager's live map via Realtime. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Door events, two-phase. The recorder POSTs `phase:"open"` the moment the
+ *  dwell begins (rep standing at the home): we resolve the address right away
+ *  and insert the row with status='open', so leads auto-detected MID
+ *  conversation inherit the correct home instantly. At walk-away it POSTs
+ *  `phase:"close"`: outcome classified from the transcript range, counters
+ *  bumped, weaker lead addresses back-filled. The client generates the door id
+ *  so a lost open response can never duplicate a door. Posts without `phase`
+ *  (older clients) are handled as a single-shot close. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!isSupabaseConfigured()) {
     return Response.json({ error: "Supabase is not configured." }, { status: 400 });
@@ -23,6 +28,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const phase = body.phase === "open" || body.phase === "close" ? body.phase : null;
+  const doorId =
+    typeof body.id === "string" && UUID_RE.test(body.id) ? body.id : crypto.randomUUID();
   const lat = typeof body.lat === "number" ? body.lat : null;
   const lng = typeof body.lng === "number" ? body.lng : null;
   const accuracyM = typeof body.accuracyM === "number" ? body.accuracyM : null;
@@ -32,114 +40,76 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const at = body.at ? new Date(String(body.at)).toISOString() : new Date().toISOString();
 
   const db = supabaseAdmin();
-  const { data: session } = await db
-    .from("D2D_Sessions")
-    .select("marketer_id,territory,doors,conversations,no_answers")
-    .eq("id", sessionId)
-    .maybeSingle();
 
-  // Pull the transcript lines captured during this door visit.
-  const { data: lineRows } = await db
-    .from("D2D_TranscriptLines")
-    .select("speaker,text")
-    .eq("session_id", sessionId)
-    .gte("seq", fromSeq)
-    .lte("seq", toSeq)
-    .order("seq", { ascending: true });
-  const transcript = (lineRows ?? []).map((r) => ({
-    speaker: r.speaker as string,
-    text: r.text as string,
-  }));
+  if (phase === "open") {
+    const { data: session } = await db
+      .from("D2D_Sessions")
+      .select("marketer_id")
+      .eq("id", sessionId)
+      .maybeSingle();
 
-  // Auto-filter street pauses: a real no-answer is a short knock-and-wait. If the
-  // rep was stationary and there was NO conversation for a long time, it's a rest,
-  // not a door, so we don't log a phantom no-answer.
-  const MAX_SILENT_DWELL_MS = 150_000; // 2.5 min
-  const hadSpeech = transcript.some(
-    (t) => (t.speaker === "rep" || t.speaker === "prospect") && t.text.trim(),
-  );
-  if (!hadSpeech && durationMs !== null && durationMs > MAX_SILENT_DWELL_MS) {
-    return Response.json({ skipped: "long-silent-pause" });
-  }
+    // The one synchronous geocode round trip - the whole point of the open
+    // phase: the home is resolved while the rep is still standing at it.
+    const pin = await resolvePin(lat, lng);
 
-  const { outcome, note } = await classifyDoor(transcript);
-  const excerpt = transcript.map((t) => `${t.speaker}: ${t.text}`).join("\n").slice(0, 2000);
-
-  // Resolve the home address and decide whether to snap the pin onto the building.
-  // We only move the pin for a trusted ROOFTOP match within SNAP_MAX_M; otherwise
-  // we keep the raw GPS so we never confidently display the wrong house. The
-  // confidence + raw fix are stored so the CRM can flag low-confidence addresses.
-  const SNAP_MAX_M = 28;
-  let pinLat = lat;
-  let pinLng = lng;
-  let address: string | null = null;
-  let addressConfidence = "gps-only";
-  let addressSource: string | null = null;
-  let snappedLat: number | null = null;
-  let snappedLng: number | null = null;
-  if (lat !== null && lng !== null) {
-    const rev = await reverseGeocodeDetailed(lat, lng);
-    if (rev) {
-      address = rev.address;
-      addressConfidence = rev.confidence;
-      addressSource = rev.source;
-      if (rev.confidence === "rooftop" && haversine({ lat, lng }, { lat: rev.lat, lng: rev.lng }) <= SNAP_MAX_M) {
-        snappedLat = rev.lat;
-        snappedLng = rev.lng;
-        pinLat = rev.lat;
-        pinLng = rev.lng;
-      }
+    const { error } = await db.from("D2D_DoorEvents").upsert(
+      {
+        id: doorId,
+        session_id: sessionId,
+        marketer_id: session?.marketer_id ?? null,
+        at,
+        status: "open",
+        lat: pin.pinLat,
+        lng: pin.pinLng,
+        gps_lat: lat,
+        gps_lng: lng,
+        gps_accuracy_m: accuracyM,
+        snapped_lat: pin.snappedLat,
+        snapped_lng: pin.snappedLng,
+        // placeholder until the close-phase classifier runs; status='open' is
+        // the real "in progress" signal (outcome has a CHECK constraint).
+        outcome: "no-answer",
+        address: pin.address,
+        address_source: pin.addressSource,
+        address_confidence: pin.addressConfidence,
+        from_seq: fromSeq,
+        to_seq: null,
+      },
+      { onConflict: "id", ignoreDuplicates: true },
+    );
+    if (error) {
+      const hint = /column .* does not exist|violates check constraint/.test(error.message)
+        ? " - run supabase/migrations/0014_door_open_close.sql first."
+        : "";
+      return Response.json({ error: error.message + hint }, { status: 500 });
     }
+
+    // Independent accuracy cross-check (building footprint point-in-polygon)
+    // runs after the response so it never slows the open phase down.
+    if (lat !== null && lng !== null && pin.address) {
+      after(() => footprintCheck(db, doorId, { lat, lng }, pin.address));
+    }
+    return Response.json({ id: doorId });
   }
 
-  const { data: door, error } = await db
-    .from("D2D_DoorEvents")
-    .insert({
-      session_id: sessionId,
-      marketer_id: session?.marketer_id ?? null,
-      at,
-      lat: pinLat,
-      lng: pinLng,
-      gps_lat: lat,
-      gps_lng: lng,
-      gps_accuracy_m: accuracyM,
-      snapped_lat: snappedLat,
-      snapped_lng: snappedLng,
-      outcome,
-      note,
-      address,
-      address_source: addressSource,
-      address_confidence: addressConfidence,
-      transcript_excerpt: excerpt || null,
-      from_seq: fromSeq,
-      to_seq: toSeq,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    const hint = /Could not find the table/.test(error.message)
-      ? " - run supabase/migrations/0008_door_events.sql first."
-      : "";
-    return Response.json({ error: error.message + hint }, { status: 500 });
-  }
-
-  // Keep the session's headline counters in step with the door pins.
-  const answered = outcome !== "no-answer";
-  await db
-    .from("D2D_Sessions")
-    .update({
-      doors: ((session?.doors as number) ?? 0) + 1,
-      conversations: ((session?.conversations as number) ?? 0) + (answered ? 1 : 0),
-      no_answers: ((session?.no_answers as number) ?? 0) + (answered ? 0 : 1),
-    })
-    .eq("id", sessionId);
-
-  return Response.json({ id: door.id, outcome });
+  // phase:"close" and legacy single-shot posts share one pipeline: classify,
+  // finalize (or insert when the open never landed), count once, back-fill.
+  const result = await closeDoor(db, sessionId, doorId, {
+    toSeq,
+    fromSeq,
+    lat,
+    lng,
+    accuracyM,
+    durationMs,
+    at,
+  });
+  if ("error" in result) return Response.json({ error: result.error }, { status: 500 });
+  return Response.json(result);
 }
 
 /** Remove a door pin (the rep's "undo" after a phantom no-answer from pausing on
- *  the street) and reverse its contribution to the session's counters. */
+ *  the street) and reverse its contribution to the session's counters. Open
+ *  doors never touched the counters, so only closed ones are reversed. */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!isSupabaseConfigured()) {
     return Response.json({ error: "Supabase is not configured." }, { status: 400 });
@@ -151,7 +121,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const db = supabaseAdmin();
   const { data: door } = await db
     .from("D2D_DoorEvents")
-    .select("outcome")
+    .select("outcome,status")
     .eq("id", doorId)
     .eq("session_id", sessionId)
     .maybeSingle();
@@ -159,21 +129,23 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   await db.from("D2D_DoorEvents").delete().eq("id", doorId);
 
-  const { data: s } = await db
-    .from("D2D_Sessions")
-    .select("doors,conversations,no_answers")
-    .eq("id", sessionId)
-    .maybeSingle();
-  if (s) {
-    const answered = door.outcome !== "no-answer";
-    await db
+  if (door.status !== "open") {
+    const { data: s } = await db
       .from("D2D_Sessions")
-      .update({
-        doors: Math.max(0, ((s.doors as number) ?? 0) - 1),
-        conversations: Math.max(0, ((s.conversations as number) ?? 0) - (answered ? 1 : 0)),
-        no_answers: Math.max(0, ((s.no_answers as number) ?? 0) - (answered ? 0 : 1)),
-      })
-      .eq("id", sessionId);
+      .select("doors,conversations,no_answers")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (s) {
+      const answered = door.outcome !== "no-answer";
+      await db
+        .from("D2D_Sessions")
+        .update({
+          doors: Math.max(0, ((s.doors as number) ?? 0) - 1),
+          conversations: Math.max(0, ((s.conversations as number) ?? 0) - (answered ? 1 : 0)),
+          no_answers: Math.max(0, ((s.no_answers as number) ?? 0) - (answered ? 0 : 1)),
+        })
+        .eq("id", sessionId);
+    }
   }
   return Response.json({ ok: true });
 }

@@ -74,6 +74,8 @@ export interface DoorPing {
   note?: string;
   /** trust level of `address` */
   addressConfidence?: AddressConfidence;
+  /** "open" while the rep is still standing at the door; "closed" once finalized */
+  status?: "open" | "closed";
 }
 
 export type Speaker = "rep" | "prospect" | "agent";

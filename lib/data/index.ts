@@ -456,6 +456,7 @@ export const data = {
         address: (r.address as string) ?? undefined,
         note: (r.note as string) ?? undefined,
         addressConfidence: (r.address_confidence as DoorPing["addressConfidence"]) ?? undefined,
+        status: (r.status as DoorPing["status"]) ?? undefined,
       }),
     );
   },
@@ -478,6 +479,7 @@ export const data = {
         address: (r.address as string) ?? undefined,
         note: (r.note as string) ?? undefined,
         addressConfidence: (r.address_confidence as DoorPing["addressConfidence"]) ?? undefined,
+        status: (r.status as DoorPing["status"]) ?? undefined,
       }),
     );
   },

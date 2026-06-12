@@ -210,7 +210,7 @@ export async function detectAndStoreLeads(
   }));
   const { data: doorRows } = await db
     .from("D2D_DoorEvents")
-    .select("lat,lng,address,address_source,address_confidence,gps_accuracy_m,from_seq,to_seq,transcript_excerpt")
+    .select("id,status,lat,lng,address,address_source,address_confidence,gps_accuracy_m,from_seq,to_seq,transcript_excerpt")
     .eq("session_id", sessionId);
   const doors = doorRows ?? [];
   type DoorRow = (typeof doors)[number];
@@ -219,15 +219,17 @@ export async function detectAndStoreLeads(
     const snip = lead.transcriptSnippet.trim().toLowerCase().slice(0, 40);
     if (!snip) return null;
     // 1. the transcript line the snippet came from -> the door covering its seq.
+    // A door still OPEN (rep mid-conversation) has to_seq null and owns every
+    // line from its from_seq onward - that's how leads detected DURING the
+    // conversation inherit the home resolved at dwell start.
     const line = linesWithSeq.find((l) => l.text.includes(snip));
     if (line) {
       const d = doors.find(
         (x) =>
           typeof x.lat === "number" &&
           typeof x.from_seq === "number" &&
-          typeof x.to_seq === "number" &&
           (x.from_seq as number) <= line.seq &&
-          line.seq <= (x.to_seq as number),
+          (x.to_seq == null ? x.status === "open" : line.seq <= (x.to_seq as number)),
       );
       if (d) return d;
     }
@@ -258,6 +260,7 @@ export async function detectAndStoreLeads(
       team_id: session.team_id ?? null,
       marketer_id: session.marketer_id ?? null,
       session_id: sessionId,
+      door_event_id: (door?.id as string | undefined) ?? null,
       name: l.name,
       address,
       lat,

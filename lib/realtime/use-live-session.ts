@@ -10,6 +10,7 @@
 ---------------------------------------------------------------------------- */
 import { useEffect, useState } from "react";
 import type {
+  RealtimePostgresDeletePayload,
   RealtimePostgresInsertPayload,
   RealtimePostgresUpdatePayload,
 } from "@supabase/supabase-js";
@@ -46,6 +47,7 @@ function mapDoor(r: Row): DoorPing {
     outcome: (r.outcome as DoorOutcome) ?? "no-answer",
     address: (r.address as string) ?? undefined,
     note: (r.note as string) ?? undefined,
+    status: (r.status as DoorPing["status"]) ?? undefined,
   };
 }
 
@@ -94,6 +96,12 @@ function mapLead(r: Row): Lead {
 
 const appendUnique = <T extends { id: string }>(list: T[], item: T): T[] =>
   list.some((x) => x.id === item.id) ? list : [...list, item];
+
+/** Replace an existing item by id, or append it (doors update on close). */
+const upsertById = <T extends { id: string }>(list: T[], item: T): T[] =>
+  list.some((x) => x.id === item.id)
+    ? list.map((x) => (x.id === item.id ? item : x))
+    : [...list, item];
 
 /** Insert a transcript line keeping the list ordered by timestamp. Realtime
  *  events (and the rep's batched POSTs) can arrive out of order; ordering by
@@ -194,6 +202,26 @@ export function useLiveSession(
         (p: RealtimePostgresInsertPayload<Row>) => {
           if (p.new.session_id !== sessionId) return;
           setDoors((prev) => appendUnique(prev, mapDoor(p.new)));
+        },
+      )
+      // Doors now open ("Knocking...") and later close with their classified
+      // outcome - the UPDATE recolors the pin; the DELETE removes silent-pause
+      // phantoms and undone pins.
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "D2D_DoorEvents" },
+        (p: RealtimePostgresUpdatePayload<Row>) => {
+          if (p.new.session_id !== sessionId) return;
+          setDoors((prev) => upsertById(prev, mapDoor(p.new)));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "D2D_DoorEvents" },
+        (p: RealtimePostgresDeletePayload<Row>) => {
+          const goneId = p.old?.id as string | undefined;
+          if (!goneId) return;
+          setDoors((prev) => prev.filter((d) => d.id !== goneId));
         },
       )
       .on(

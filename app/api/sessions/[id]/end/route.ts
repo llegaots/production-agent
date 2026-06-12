@@ -1,5 +1,6 @@
 import { after, type NextRequest } from "next/server";
 import { supabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/server";
+import { closeDoor } from "@/lib/agent/close-door";
 import { detectAndStoreLeads, isLeadSpotterConfigured } from "@/lib/agent/lead-spotter";
 import { gradeSession, isSessionGraderConfigured } from "@/lib/agent/session-grader";
 
@@ -44,15 +45,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await db.from("D2D_Marketers").update({ status: "offline" }).eq("id", session.marketer_id);
   }
 
-  // Background: final lead-detection sweep over the whole conversation, then grade
-  // the shift against the team's playbook. Sequential so we don't fire two Claude
-  // bursts at once; neither is allowed to break the session lifecycle.
-  if (isLeadSpotterConfigured() || isSessionGraderConfigured()) {
-    after(async () => {
-      if (isLeadSpotterConfigured()) await detectAndStoreLeads(sessionId, { maxLines: 200 });
-      if (isSessionGraderConfigured()) await gradeSession(sessionId);
-    });
-  }
+  // Background: finalize any door still open (tab closed mid-dwell, or the
+  // recorder's un-awaited close lost the race), THEN run the final lead sweep
+  // and grade the shift. Sequential so we don't fire two Claude bursts at
+  // once; nothing here is allowed to break the session lifecycle.
+  after(async () => {
+    try {
+      const { data: openDoors } = await db
+        .from("D2D_DoorEvents")
+        .select("id,at")
+        .eq("session_id", sessionId)
+        .eq("status", "open");
+      for (const d of openDoors ?? []) {
+        const durationMs = d.at ? Date.now() - new Date(d.at as string).getTime() : null;
+        // No close position available: closeDoor keeps the open-phase
+        // resolution and the status guard makes a late recorder close a no-op.
+        await closeDoor(db, sessionId, d.id as string, { toSeq: null, durationMs });
+      }
+    } catch {
+      // sweep is best-effort
+    }
+    if (isLeadSpotterConfigured()) await detectAndStoreLeads(sessionId, { maxLines: 200 });
+    if (isSessionGraderConfigured()) await gradeSession(sessionId);
+  });
 
   return Response.json({ ok: true });
 }

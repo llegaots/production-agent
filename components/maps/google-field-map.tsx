@@ -50,6 +50,7 @@ function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
   const liveRing = useRef<google.maps.Marker | null>(null);
   const liveDot = useRef<google.maps.Marker | null>(null);
   const doorMks = useRef<globalThis.Map<string, google.maps.Marker>>(new globalThis.Map());
+  const doorSigs = useRef<globalThis.Map<string, string>>(new globalThis.Map());
   const info = useRef<google.maps.InfoWindow | null>(null);
   const fitted = useRef(false);
 
@@ -108,22 +109,42 @@ function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
     if (!startMk.current) startMk.current = endpointMarker(map, breadcrumb[0], "S", "#059e6e", "Started here");
   }, [map, breadcrumb]);
 
-  // door pins — only ADD markers for newly-seen doors (existing ones stay put)
+  // door pins — a door now OPENS as an amber "knocking" pin the moment the rep
+  // dwells, then recolors with its outcome at walk-away. Markers are recreated
+  // when a door's data changes (cheap, and avoids stale info-window closures)
+  // and removed when a door disappears (undo / silent-pause delete).
   useEffect(() => {
     if (!map) return;
     if (!info.current) info.current = new google.maps.InfoWindow();
     const seen = new Set<string>();
     (trail ?? []).forEach((t) => {
       seen.add(t.id);
-      if (doorMks.current.has(t.id)) return;
+      const isOpen = t.status === "open";
+      const sig = [t.position.lat, t.position.lng, t.outcome, t.status ?? "", t.address ?? "", t.note ?? ""].join("|");
+      const existing = doorMks.current.get(t.id);
+      if (existing) {
+        if (doorSigs.current.get(t.id) === sig) return; // unchanged
+        existing.setMap(null);
+        doorMks.current.delete(t.id);
+      }
+      doorSigs.current.set(t.id, sig);
+      const color = isOpen ? "#f5a623" : outcomeColor[t.outcome];
+      const title = isOpen ? "Knocking…" : outcomeLabel[t.outcome];
       const marker = new google.maps.Marker({
         position: t.position,
         map,
         zIndex: 20,
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: outcomeColor[t.outcome], fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5 },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 6,
+          fillColor: color,
+          fillOpacity: isOpen ? 0.6 : 1,
+          strokeColor: "#ffffff",
+          strokeWeight: isOpen ? 2 : 1.5,
+        },
       });
       const content =
-        `<div style="font:700 12px system-ui;color:#0d1713">${outcomeLabel[t.outcome]}</div>` +
+        `<div style="font:700 12px system-ui;color:#0d1713">${title}</div>` +
         (t.address ? `<div style="font:600 11px system-ui;color:#0d1713;margin-top:1px">${escapeHtml(t.address)}</div>` : "") +
         (t.note ? `<div style="font:12px/1.4 system-ui;color:#52605a;max-width:220px;margin-top:2px">${escapeHtml(t.note)}</div>` : "");
       const open = () => {
@@ -140,6 +161,7 @@ function Layers({ path, breadcrumb, trail, live, mutePath }: LayerProps) {
       if (!seen.has(id)) {
         m.setMap(null);
         doorMks.current.delete(id);
+        doorSigs.current.delete(id);
       }
     }
   }, [map, trail]);
