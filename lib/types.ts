@@ -59,6 +59,11 @@ export interface Session {
 
 export type DoorOutcome = "answered" | "no-answer" | "callback" | "not-interested" | "lead";
 
+/** How much to trust a resolved street address.
+ *  rooftop = geocoder pinned the exact building; interpolated = estimated along
+ *  the street; gps-only = no house-level match, the raw GPS point is all we have. */
+export type AddressConfidence = "rooftop" | "interpolated" | "gps-only";
+
 export interface DoorPing {
   id: string;
   at: string;
@@ -67,6 +72,8 @@ export interface DoorPing {
   address?: string;
   /** one-line AI summary of what happened at this door (shown on map hover) */
   note?: string;
+  /** trust level of `address` */
+  addressConfidence?: AddressConfidence;
 }
 
 export type Speaker = "rep" | "prospect" | "agent";
@@ -119,6 +126,10 @@ export interface Lead {
   summary: string;
   transcriptSnippet: string;
   tags: string[];
+  /** trust level of `address` (drives the CRM "needs address check" flag) */
+  addressConfidence?: AddressConfidence;
+  /** true once a manager has confirmed or corrected the address */
+  addressVerified?: boolean;
 }
 
 export type RouteStatus = "active" | "scheduled" | "completed";

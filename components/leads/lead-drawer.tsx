@@ -1,14 +1,40 @@
 "use client";
 
-import { Phone, Mail, MapPin, CalendarPlus, Bot, Hand, Quote } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Phone,
+  Mail,
+  MapPin,
+  CalendarPlus,
+  Bot,
+  Hand,
+  Quote,
+  ShieldCheck,
+  AlertTriangle,
+  Loader2,
+  Check,
+  Pencil,
+} from "lucide-react";
 import { Drawer } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { LeadStatusBadge } from "@/components/ui/status";
 import { FieldMap } from "@/components/maps/field-map";
-import { timeAgo } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import type { Lead } from "@/lib/types";
+
+/** Trust chip for a lead's address - drives the "needs check" review flow. */
+function addressMeta(lead: Lead) {
+  if (lead.addressVerified)
+    return { cls: "bg-primary-50 text-primary-700", Icon: ShieldCheck, label: "Address confirmed" };
+  if (lead.addressConfidence === "rooftop")
+    return { cls: "bg-primary-50 text-primary-700", Icon: ShieldCheck, label: "Rooftop match" };
+  if (lead.addressConfidence === "interpolated")
+    return { cls: "bg-amber-50 text-[#b45309]", Icon: MapPin, label: "Approximate address" };
+  return { cls: "bg-rose-50 text-[#be123c]", Icon: AlertTriangle, label: "GPS only, check address" };
+}
 
 function ScoreDial({ score }: { score: number }) {
   const r = 26;
@@ -56,6 +82,37 @@ export function LeadDrawer({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [addr, setAddr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Reset the inline editor whenever a different lead is shown (no effect needed).
+  const [shownId, setShownId] = useState<string | null>(lead?.id ?? null);
+  if ((lead?.id ?? null) !== shownId) {
+    setShownId(lead?.id ?? null);
+    setEditing(false);
+  }
+
+  async function saveAddress() {
+    if (!lead) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: lead.id, address: addr }),
+      });
+      if (res.ok) {
+        setEditing(false);
+        router.refresh();
+        onOpenChange(false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Drawer
       open={open}
@@ -82,6 +139,19 @@ export function LeadDrawer({
                     </>
                   )}
                 </span>
+                {(() => {
+                  const { cls, Icon, label } = addressMeta(lead);
+                  return (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                        cls,
+                      )}
+                    >
+                      <Icon className="size-3" /> {label}
+                    </span>
+                  );
+                })()}
               </div>
               <p className="text-[13px] leading-relaxed text-ink-soft">{lead.summary}</p>
             </div>
@@ -122,14 +192,35 @@ export function LeadDrawer({
           <div className="rounded-2xl border border-line p-4">
             {lead.phone && <MetaRow label="Phone" value={lead.phone} />}
             {lead.email && <MetaRow label="Email" value={lead.email} />}
-            <MetaRow
-              label="Address"
-              value={
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="size-3.5 text-muted" /> {lead.address}
+            <div className="flex items-center justify-between gap-2 border-b border-line-soft py-2.5">
+              <span className="text-[12px] text-muted">Address</span>
+              {editing ? (
+                <span className="flex items-center gap-1.5">
+                  <input
+                    value={addr}
+                    onChange={(e) => setAddr(e.target.value)}
+                    placeholder="123 Main St, City"
+                    className="h-8 w-52 rounded-lg border border-line bg-surface px-2 text-[13px] text-ink outline-none focus:border-primary-200"
+                  />
+                  <Button size="sm" variant="primary" disabled={saving || !addr.trim()} onClick={saveAddress}>
+                    {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                  </Button>
                 </span>
-              }
-            />
+              ) : (
+                <span className="flex items-center gap-1.5 text-[13px] font-medium text-ink">
+                  <MapPin className="size-3.5 text-muted" /> {lead.address || "Unknown"}
+                  <button
+                    onClick={() => {
+                      setAddr(lead.address ?? "");
+                      setEditing(true);
+                    }}
+                    className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-primary-600 hover:underline"
+                  >
+                    <Pencil className="size-3" /> Edit
+                  </button>
+                </span>
+              )}
+            </div>
             <MetaRow
               label="Captured by"
               value={

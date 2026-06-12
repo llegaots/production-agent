@@ -1,7 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { reverseGeocode } from "@/lib/geo/geocode";
 
 /* ----------------------------------------------------------------------------
    Lead spotter (Phase 2). Scans a window of a door-to-door sales transcript and
@@ -201,44 +200,71 @@ export async function detectAndStoreLeads(
   });
   if (!fresh.length) return 0;
 
-  // Door pins (with their GPS + conversation excerpt) let us place each lead at
-  // the exact home it was collected at - match by the lead's verbatim snippet.
+  // Place each lead at the DOOR it was captured at. Doors store the transcript
+  // seq-range they cover and the already-resolved address + confidence, so we
+  // match the lead's snippet to its transcript line, find the door whose range
+  // covers that line, and reuse the door's address (no second geocode).
+  const linesWithSeq = (lineRows ?? []).map((r) => ({
+    seq: r.seq as number,
+    text: ((r.text as string) ?? "").toLowerCase(),
+  }));
   const { data: doorRows } = await db
     .from("D2D_DoorEvents")
-    .select("lat,lng,transcript_excerpt")
+    .select("lat,lng,address,address_source,address_confidence,gps_accuracy_m,from_seq,to_seq,transcript_excerpt")
     .eq("session_id", sessionId);
   const doors = doorRows ?? [];
+  type DoorRow = (typeof doors)[number];
 
-  const locFor = (lead: SpottedLead): { lat: number; lng: number } | null => {
+  const doorForLead = (lead: SpottedLead): DoorRow | null => {
     const snip = lead.transcriptSnippet.trim().toLowerCase().slice(0, 40);
-    if (snip) {
-      const door = doors.find(
-        (d) =>
-          typeof d.lat === "number" &&
-          typeof d.lng === "number" &&
-          (d.transcript_excerpt as string | null)?.toLowerCase().includes(snip),
+    if (!snip) return null;
+    // 1. the transcript line the snippet came from -> the door covering its seq.
+    const line = linesWithSeq.find((l) => l.text.includes(snip));
+    if (line) {
+      const d = doors.find(
+        (x) =>
+          typeof x.lat === "number" &&
+          typeof x.from_seq === "number" &&
+          typeof x.to_seq === "number" &&
+          (x.from_seq as number) <= line.seq &&
+          line.seq <= (x.to_seq as number),
       );
-      if (door) return { lat: door.lat as number, lng: door.lng as number };
+      if (d) return d;
     }
-    if (typeof session.lat === "number" && typeof session.lng === "number") {
-      return { lat: session.lat as number, lng: session.lng as number };
-    }
-    return null;
+    // 2. fallback: the door whose stored excerpt contains the snippet.
+    return (
+      doors.find(
+        (x) => typeof x.lat === "number" && (x.transcript_excerpt as string | null)?.toLowerCase().includes(snip),
+      ) ?? null
+    );
   };
 
   const inserted: SpottedLead[] = [];
   for (const l of fresh) {
-    const loc = locFor(l);
-    // Prefer the GPS-derived address; fall back to anything stated in the convo.
-    const address = (loc ? await reverseGeocode(loc.lat, loc.lng) : null) ?? l.address ?? null;
+    const door = doorForLead(l);
+    const lat =
+      door && typeof door.lat === "number" ? (door.lat as number)
+      : typeof session.lat === "number" ? (session.lat as number)
+      : null;
+    const lng =
+      door && typeof door.lng === "number" ? (door.lng as number)
+      : typeof session.lng === "number" ? (session.lng as number)
+      : null;
+    const address = (door?.address as string | null) ?? l.address ?? null;
+    const addressConfidence = (door?.address_confidence as string | null) ?? "gps-only";
+    const addressSource = (door?.address_source as string | null) ?? null;
+    const accuracyM = door && typeof door.gps_accuracy_m === "number" ? (door.gps_accuracy_m as number) : null;
     const { error: insErr } = await db.from("D2D_Leads").insert({
       team_id: session.team_id ?? null,
       marketer_id: session.marketer_id ?? null,
       session_id: sessionId,
       name: l.name,
       address,
-      lat: loc?.lat ?? null,
-      lng: loc?.lng ?? null,
+      lat,
+      lng,
+      gps_accuracy_m: accuracyM,
+      address_source: addressSource,
+      address_confidence: addressConfidence,
       phone: l.phone ?? null,
       email: l.email ?? null,
       status: "new",

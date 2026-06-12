@@ -291,6 +291,8 @@ export const data = {
         summary: (r.summary as string) ?? "",
         transcriptSnippet: (r.transcript_snippet as string) ?? "",
         tags: (r.tags as string[]) ?? [],
+        addressConfidence: (r.address_confidence as Lead["addressConfidence"]) ?? undefined,
+        addressVerified: (r.address_verified as boolean) ?? false,
       };
     });
   },
@@ -430,6 +432,8 @@ export const data = {
         summary: (r.summary as string) ?? "",
         transcriptSnippet: (r.transcript_snippet as string) ?? "",
         tags: (r.tags as string[]) ?? [],
+        addressConfidence: (r.address_confidence as Lead["addressConfidence"]) ?? undefined,
+        addressVerified: (r.address_verified as boolean) ?? false,
       }),
     );
   },
@@ -451,6 +455,7 @@ export const data = {
         outcome: (r.outcome as DoorOutcome) ?? "no-answer",
         address: (r.address as string) ?? undefined,
         note: (r.note as string) ?? undefined,
+        addressConfidence: (r.address_confidence as DoorPing["addressConfidence"]) ?? undefined,
       }),
     );
   },
@@ -472,6 +477,7 @@ export const data = {
         outcome: (r.outcome as DoorOutcome) ?? "no-answer",
         address: (r.address as string) ?? undefined,
         note: (r.note as string) ?? undefined,
+        addressConfidence: (r.address_confidence as DoorPing["addressConfidence"]) ?? undefined,
       }),
     );
   },

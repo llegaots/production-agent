@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Mic, Pause, Play, Square, CheckCircle2, AlertTriangle, ArrowLeftRight } from "lucide-react";
+import {
+  Mic,
+  Pause,
+  Play,
+  Square,
+  CheckCircle2,
+  AlertTriangle,
+  ArrowLeftRight,
+  MapPin,
+  MapPinOff,
+  Undo2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MicWave } from "@/components/sessions/mic-wave";
 import { cn } from "@/lib/utils";
@@ -12,7 +23,7 @@ import { DwellTracker, type DoorVisit } from "@/lib/geo/dwell-tracker";
 
 const FLUSH_MS = 1200; // debounce window for batching finalized lines to the server
 const DISPLAY_CAP = 250; // keep the on-device transcript light over long shifts
-const POSITION_POST_MS = 4000; // throttle live-location updates to the server
+const POSITION_POST_MS = 2000; // throttle live-location updates to the server (denser = fewer cut corners)
 
 function clock(totalSec: number): string {
   const h = Math.floor(totalSec / 3600);
@@ -39,6 +50,9 @@ export function Recorder({
   const [lines, setLines] = useState<FinalLine[]>([]);
   const [interim, setInterim] = useState<{ text: string; speaker: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pinsOn, setPinsOn] = useState(true);
+  const [lastPin, setLastPin] = useState<{ id: string; outcome: string } | null>(null);
+  const pinTimer = useRef<number>(0);
 
   const captureRef = useRef<LiveCapture | null>(null);
   const pendingRef = useRef<FinalLine[]>([]);
@@ -109,19 +123,33 @@ export function Recorder({
   );
 
   const postDoor = useCallback(
-    (door: DoorVisit) => {
-      void fetch(`/api/sessions/${sessionId}/doors`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        keepalive: true,
-        body: JSON.stringify({
-          lat: door.lat,
-          lng: door.lng,
-          fromSeq: doorFromSeqRef.current,
-          toSeq: lastSeqRef.current,
-          at: door.startedAt,
-        }),
-      }).catch(() => {});
+    async (door: DoorVisit) => {
+      const durationMs = new Date(door.endedAt).getTime() - new Date(door.startedAt).getTime();
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/doors`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify({
+            lat: door.lat,
+            lng: door.lng,
+            accuracyM: door.accuracyM,
+            durationMs,
+            fromSeq: doorFromSeqRef.current,
+            toSeq: lastSeqRef.current,
+            at: door.startedAt,
+          }),
+        });
+        const j = (await res.json().catch(() => ({}))) as { id?: string; outcome?: string };
+        // Offer a quick undo (a street pause can still look like a door).
+        if (res.ok && j.id) {
+          setLastPin({ id: j.id, outcome: j.outcome ?? "no-answer" });
+          if (pinTimer.current) window.clearTimeout(pinTimer.current);
+          pinTimer.current = window.setTimeout(() => setLastPin(null), 7000);
+        }
+      } catch {
+        /* never block capture */
+      }
     },
     [sessionId],
   );
@@ -226,18 +254,41 @@ export function Recorder({
     }
   }
 
+  // Door detection is paused when recording is paused OR the rep turned pins off.
+  const applyDwellPause = (recordingPaused: boolean, pins: boolean) =>
+    trackerRef.current?.setPaused(recordingPaused || !pins);
+
   function togglePause() {
     const c = captureRef.current;
     if (!c) return;
     if (phase === "recording") {
       c.pause();
-      trackerRef.current?.setPaused(true);
+      applyDwellPause(true, pinsOn);
       setPhase("paused");
     } else if (phase === "paused") {
       c.resume();
-      trackerRef.current?.setPaused(false);
+      applyDwellPause(false, pinsOn);
       setPhase("recording");
     }
+  }
+
+  // Stop logging door pins (e.g. while resting on the street) without stopping
+  // the recording / transcription.
+  function togglePins() {
+    const next = !pinsOn;
+    setPinsOn(next);
+    applyDwellPause(phase === "paused", next);
+  }
+
+  async function undoPin() {
+    const p = lastPin;
+    if (!p) return;
+    setLastPin(null);
+    if (pinTimer.current) window.clearTimeout(pinTimer.current);
+    await fetch(`/api/sessions/${sessionId}/doors?id=${p.id}`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => {});
   }
 
   // If diarization labelled you as the prospect (or vice-versa), flip the mapping
@@ -328,12 +379,24 @@ export function Recorder({
                 <Square className="size-4" /> End session
               </Button>
             </div>
-            <button
-              onClick={swapSpeakers}
-              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-ink"
-            >
-              <ArrowLeftRight className="size-3.5" /> Swap speaker labels (me ↔ prospect)
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5">
+              <button
+                onClick={swapSpeakers}
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-muted transition-colors hover:text-ink"
+              >
+                <ArrowLeftRight className="size-3.5" /> Swap speaker labels (me ↔ prospect)
+              </button>
+              <button
+                onClick={togglePins}
+                className={cn(
+                  "inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors",
+                  pinsOn ? "text-muted hover:text-ink" : "text-[#b45309]",
+                )}
+              >
+                {pinsOn ? <MapPin className="size-3.5" /> : <MapPinOff className="size-3.5" />}
+                {pinsOn ? "Door pins on" : "Door pins paused"}
+              </button>
+            </div>
           </>
         )}
 
@@ -363,6 +426,20 @@ export function Recorder({
           </>
         )}
       </section>
+
+      {liveish && lastPin && (
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-2xl border border-line bg-surface-muted px-4 py-2.5 text-[13px]">
+          <span className="text-muted">
+            Logged a {lastPin.outcome === "no-answer" ? "no-answer" : lastPin.outcome} at this spot.
+          </span>
+          <button
+            onClick={undoPin}
+            className="inline-flex items-center gap-1 font-semibold text-[#be123c] hover:underline"
+          >
+            <Undo2 className="size-3.5" /> Not a door, undo
+          </button>
+        </div>
+      )}
 
       {/* ── live transcript (rep's own view) ─────────────────────────────────── */}
       {liveish && (
